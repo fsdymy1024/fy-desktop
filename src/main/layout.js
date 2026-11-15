@@ -14,11 +14,12 @@ const SMALL = 168;
 const ORG_W = 756;
 
 function defaults(width, height) {
-  const w = Math.max(1024, width);
-  const h = Math.max(600, height);
+  // 缩放后工作区尺寸常带小数，坐标统一取整，避免配置里出现 1390.2857 这种值
+  const w = Math.round(Math.max(1024, width));
+  const h = Math.round(Math.max(600, height));
 
-  const orgW = Math.min(ORG_W, Math.max(420, w - COL_W - MARGIN * 3));
-  const orgX = Math.max(MARGIN + COL_W + MARGIN, w - MARGIN - orgW);
+  const orgW = Math.round(Math.min(ORG_W, Math.max(420, w - COL_W - MARGIN * 3)));
+  const orgX = Math.round(Math.max(MARGIN + COL_W + MARGIN, w - MARGIN - orgW));
   const colX = MARGIN;
 
   const weatherH = 150;
