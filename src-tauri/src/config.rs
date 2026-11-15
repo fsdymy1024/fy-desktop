@@ -7,7 +7,39 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const CONFIG_VERSION: u32 = 2;
+pub const CONFIG_VERSION: u32 = 3;
+
+/// 预设尺寸的基准边长 a（设计像素）。
+///
+/// 三档尺寸全部从它推出来，所以组件之间天然能对齐：
+/// 小 a×a、中 2a×a、大 2a×1.5a。取 120 是因为 2a=240 刚好和「逐时 6 列 +
+/// 高低温」挤得下的最小宽度差不多，再大就回到「桌面被卡片占满」的老问题。
+pub const A: f64 = 120.0;
+
+/// 尺寸档位 → 宽高（设计像素）
+pub fn dims(size: &str) -> (f64, f64) {
+    match size {
+        "s" => (A, A),
+        "l" => (A * 2.0, A * 1.5),
+        _ => (A * 2.0, A),
+    }
+}
+
+/// 某个组件允许的尺寸档位。日历和备忘录塞不下 a×a，只给中/大。
+pub fn sizes_for(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "calendar" | "notes" => &["m", "l"],
+        _ => &["s", "m", "l"],
+    }
+}
+
+pub fn default_size(kind: &str) -> &'static str {
+    match kind {
+        // 数字钟只有一串时间，给中号纯属浪费桌面
+        "digital" => "s",
+        _ => "m",
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WidgetCfg {
@@ -15,8 +47,15 @@ pub struct WidgetCfg {
     pub kind: String,
     pub x: f64,
     pub y: f64,
+    /// s | m | l。w/h 是它的推导结果，前端按档位重算，不单独调
+    #[serde(default = "d_size")]
+    pub size: String,
     pub w: f64,
     pub h: f64,
+}
+
+fn d_size() -> String {
+    "m".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,10 +153,10 @@ impl Config {
             material: d_material(),
             widgets: vec![
                 widget("weather", col_x, 36.0),
-                widget("clock", col_x, 178.0),
-                widget("calendar", col_x, 390.0),
-                widget("system", col_x, 552.0),
-                widget("network", col_x, 714.0),
+                widget("clock", col_x, 176.0),
+                widget("calendar", col_x, 316.0),
+                widget("system", col_x, 456.0),
+                widget("network", col_x, 596.0),
             ],
             organizer: OrganizerCfg {
                 x: org_x,
@@ -139,12 +178,14 @@ impl Config {
 }
 
 fn widget(kind: &str, x: f64, y: f64) -> WidgetCfg {
-    let (w, h) = crate::widget_size(kind);
+    let size = default_size(kind).to_string();
+    let (w, h) = dims(&size);
     WidgetCfg {
         id: format!("{kind}-{}", next_seq()),
         kind: kind.into(),
         x,
         y,
+        size,
         w,
         h,
     }

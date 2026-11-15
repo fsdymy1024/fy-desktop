@@ -8,7 +8,7 @@ import { REGISTRY, ORDER } from './widgets.js';
 const MATERIALS = [
   ['glass', '玻璃'],
   ['dusk', '暮色'],
-  ['solid', '原色']
+  ['solid', '石墨']
 ];
 
 export function openGallery(host, opts) {
@@ -34,7 +34,7 @@ export function openGallery(host, opts) {
       <div class="gal-head">
         <div>
           <h2>组件库</h2>
-          <p>点一下加到桌面，随时可在编辑模式里拖动、缩放、移除</p>
+          <p>点一下加到桌面；编辑模式里可拖动位置、切换小/中/大、移除</p>
         </div>
         <span class="spacer"></span>
         <div style="display:flex;gap:4px;align-items:center">

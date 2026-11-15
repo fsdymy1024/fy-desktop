@@ -398,24 +398,109 @@ fn now_text() -> String {
     format!("[{h:02}:{m:02}:{s:02}]")
 }
 
-/// 用 ShellExecuteW 打开文件 / 文件夹 / 快捷方式。
+/// 资源管理器主窗口的类名。判断「有没有新窗口出现」只看这两类。
+#[cfg(windows)]
+fn explorer_windows() -> Vec<isize> {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetClassNameW};
+
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let out = &mut *(lparam.0 as *mut Vec<isize>);
+        let mut buf = [0u16; 64];
+        let n = GetClassNameW(hwnd, &mut buf).max(0) as usize;
+        match String::from_utf16_lossy(&buf[..n]).as_str() {
+            "CabinetWClass" | "ExploreWClass" => out.push(hwnd.0 as isize),
+            _ => {}
+        }
+        BOOL(1)
+    }
+
+    let mut out: Vec<isize> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(cb), LPARAM(&mut out as *mut _ as isize));
+    }
+    out
+}
+
+#[cfg(windows)]
+fn force_show(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_SHOWNORMAL};
+    unsafe {
+        let h = HWND(hwnd as *mut _);
+        let _ = ShowWindow(h, SW_SHOWNORMAL);
+        let _ = SetForegroundWindow(h);
+    }
+}
+
+/// 起一个 explorer 进程，并保证它的窗口是**可见**的。
 ///
-/// 以前是 `cmd /c start "" <path>`：cmd 本身是以 CREATE_NO_WINDOW 起的，
-/// `start` 派生新进程时会继承「不要显示窗口」的启动信息，于是资源管理器窗口
-/// 在后台建好、又立刻按隐藏状态显示——用户看到的就是「点了没反应」。
-/// ShellExecuteW 直接交给外壳去执行默认动作，不经过 cmd，也就没有这层污染。
+/// 为什么不能只用 ShellExecute：
+/// 1. 机器上只要存在过一个「隐藏」的资源管理器窗口（v0.4 之前用 `cmd /c start`
+///    打开过就会留下一个），ShellExecuteW 不会新建窗口，而是把那个**隐藏**窗口
+///    导航过去，返回值还是 >32 的「成功」——用户看到的就是「点了没反应」。
+/// 2. 无控制台进程派生的子进程可能继承「不显示窗口」的启动状态。
+/// 所以这里用 `/n` 强制开新窗口，再轮询新出现的窗口把它 ShowWindow + 置前。
+#[cfg(windows)]
+fn spawn_explorer(args: &[String]) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    let before = explorer_windows();
+    let mut cmd = std::process::Command::new("explorer");
+    for a in args {
+        cmd.arg(a);
+    }
+    // CREATE_NO_WINDOW：不闪控制台；窗口显示交给后面的 ShowWindow
+    if let Err(e) = cmd.creation_flags(0x0800_0000).spawn() {
+        log_launch(&format!("  explorer spawn 失败：{e}"));
+        return Err(format!("启动资源管理器失败：{e}"));
+    }
+
+    for _ in 0..25 {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let fresh: Vec<isize> = explorer_windows()
+            .into_iter()
+            .filter(|h| !before.contains(h))
+            .collect();
+        if let Some(&h) = fresh.first() {
+            force_show(h);
+            // explorer 建窗后还要铺内容，等一拍再确认一次，免得刚置前又被内部逻辑拨回去
+            std::thread::sleep(std::time::Duration::from_millis(140));
+            force_show(h);
+            log_launch(&format!("  new window {h:#x} shown"));
+            return Ok(());
+        }
+    }
+    Err("没有出现新的资源管理器窗口".into())
+}
+
+/// 打开文件 / 文件夹 / 快捷方式。
 ///
+/// 顺序：先用 explorer 开新窗口并强制显示；不成再退回 ShellExecuteW。
 /// 返回 Err 时前端会弹 toast，别再让失败静默。
 #[cfg(windows)]
 pub fn open_path(path: &str) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
+    // 路径里带逗号时 /n,<path> 会被切错，这种少见情况退回外壳
+    let open_args = if path.contains(',') {
+        vec![path.to_string()]
+    } else {
+        vec![format!("/n,{path}")]
+    };
+
+    let ret = spawn_explorer(&open_args);
+    log_launch(&format!("open {path} → {ret:?}"));
+    if ret.is_ok() {
+        return Ok(());
+    }
+
     use windows::core::{HSTRING, PCWSTR};
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     let op = HSTRING::from("open");
     let file = HSTRING::from(path);
-    let ret = unsafe {
+    let code = unsafe {
         ShellExecuteW(
             None,
             PCWSTR(op.as_ptr()),
@@ -424,27 +509,14 @@ pub fn open_path(path: &str) -> Result<(), String> {
             PCWSTR::null(),
             SW_SHOWNORMAL,
         )
-    };
+    }
+    .0 as isize;
     // 返回值 > 32 才算成功；<= 32 是错误码（2 找不到文件、5 拒绝访问、31 无关联程序）
-    let code = ret.0 as isize;
-    log_launch(&format!("open {path} → {code}"));
+    log_launch(&format!("  fallback ShellExecute → {code}"));
     if code > 32 {
         return Ok(());
     }
-
-    // 外壳拒绝时退回 explorer：至少文件夹还能开
-    let fell = std::process::Command::new("explorer")
-        .arg(path)
-        .creation_flags(0)
-        .spawn();
-    log_launch(&format!(
-        "  fallback explorer {path} → {}",
-        match &fell {
-            Ok(_) => "ok".to_string(),
-            Err(e) => e.to_string(),
-        }
-    ));
-    fell.map(|_| ()).map_err(|e| format!("打开失败（{code}）：{e}"))
+    Err(format!("打开失败（ShellExecute {code}）：{path}"))
 }
 
 #[cfg(not(windows))]
@@ -453,13 +525,15 @@ pub fn open_path(path: &str) -> Result<(), String> {
     Err("仅支持 Windows".into())
 }
 
-pub fn reveal_path(path: &str) {
+pub fn reveal_path(path: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        let _ = std::process::Command::new("explorer")
-            .arg(format!("/select,{path}"))
-            .creation_flags(0)
-            .spawn();
+        // /select, 会在已有窗口里定位并选中，同样可能落进那个隐藏窗口，
+        // 所以还是走「开新窗口 + 强制显示」这条路
+        let r = spawn_explorer(&[format!("/select,{path}")]);
+        log_launch(&format!("reveal {path} → {r:?}"));
+        r
     }
+    #[cfg(not(windows))]
+    Err("仅支持 Windows".into())
 }

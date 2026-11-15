@@ -100,8 +100,8 @@ pub fn open_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn reveal_path(path: String) {
-    desktop::reveal_path(&path);
+pub fn reveal_path(path: String) -> Result<(), String> {
+    desktop::reveal_path(&path)
 }
 
 #[tauri::command]

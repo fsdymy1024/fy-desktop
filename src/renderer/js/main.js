@@ -6,7 +6,7 @@
  */
 
 import { invoke, listen, dbg } from './bridge.js';
-import { REGISTRY, setShowSeconds } from './widgets.js';
+import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf } from './widgets.js';
 import { renderOrganizer, groupAtPoint, resetLoose } from './organizer.js';
 import { openGallery } from './gallery.js';
 import { clamp } from './util.js';
@@ -39,6 +39,7 @@ async function boot() {
   applyMaterial();
   setShowSeconds(S.cfg.show_seconds !== false);
 
+  normalizeSizes();
   renderWidgets();
 
   // 窗口显示必须早于任何耗时/易失败的 IO。
@@ -77,6 +78,8 @@ async function boot() {
 
   // 调试：FY_UI=place|group 时自动打开对应弹层，方便截图核对样式与命中区
   if (b.uitest === 'place') setTimeout(() => pickPlace(), 400);
+  // FY_UI=edit：进编辑模式，用来核对档位按钮、参考线这些只在编辑态出现的东西
+  if (b.uitest === 'edit') setTimeout(() => setEdit(true), 400);
   if (b.uitest === 'group') setTimeout(() => promptInput('新建分组', '例如：设计素材'), 400);
 }
 
@@ -96,11 +99,68 @@ function applyMaterial() {
 
 /* ============================ 组件 ============================ */
 
+/** 允许的尺寸档位。日历/备忘录塞不下正方形，只给中/大 */
+const sizesOf = (kind) => REGISTRY[kind]?.sizes || ['m'];
+
+/** 老配置只有 w/h、没有 size：统一归到「中」，再把 w/h 按档位重算。
+ *  v0.6 起尺寸只认三档预设，手拉出来的 216×128 这种尺寸不再合法。 */
+function normalizeSizes() {
+  for (const w of S.cfg.widgets) {
+    const list = sizesOf(w.kind);
+    let size = w.size;
+    if (!list.includes(size)) {
+      // 按旧宽高比例挑最接近的一档（方的是小、2:1 是中、4:3 是大）
+      const ratio = w.h > 0 ? w.w / w.h : 2;
+      size = list.reduce((best, k) => {
+        const [pw, ph] = dimsOf(k);
+        const [bw, bh] = dimsOf(best);
+        return Math.abs(pw / ph - ratio) < Math.abs(bw / bh - ratio) ? k : best;
+      }, list[0]);
+    }
+    const [nw, nh] = dimsOf(size);
+    if (w.size !== size || w.w !== nw || w.h !== nh) {
+      w.size = size;
+      w.w = nw;
+      w.h = nh;
+    }
+    // 改成预设尺寸后可能顶出屏幕，拉回来
+    const nx = Math.round(clamp(w.x, 0, Math.max(0, S.design.w - nw)));
+    const ny = Math.round(clamp(w.y, 0, Math.max(0, S.design.h - nh)));
+    w.x = nx;
+    w.y = ny;
+  }
+
+  // 旧尺寸是手拉出来的，换成 240 宽后会有卡片互相压住几个像素。
+  // 让位规则：横着只差一点点就往右挪（保住同一排），差得多才往下挪——
+  // 列是用户自己排的，随便拆开会前功尽弃。
+  const clash = (a, b) =>
+    a.x < b.x + b.w + 8 && a.x + a.w + 8 > b.x && a.y < b.y + b.h + 8 && a.y + a.h + 8 > b.y;
+  const placed = [];
+  for (const w of S.cfg.widgets) {
+    let guard = 0;
+    while (guard++ < 40) {
+      const hit = placed.find((o) => clash(w, o));
+      if (!hit) break;
+      const right = hit.x + hit.w + 8;
+      if (right - w.x <= 24 && right + w.w <= S.design.w) w.x = right;
+      else w.y = hit.y + hit.h + 8;
+    }
+    w.x = Math.round(w.x / 8) * 8;
+    w.y = Math.round(clamp(w.y, 0, Math.max(0, S.design.h - w.h)) / 8) * 8;
+    placed.push(w);
+  }
+
+  // 位置可能被挪过，统一落一次盘（写盘本身有 320ms 防抖）
+  save();
+}
+
 function place(el, w) {
   el.style.left = `${w.x}px`;
   el.style.top = `${w.y}px`;
   el.style.width = `${w.w}px`;
   el.style.height = `${w.h}px`;
+  // 尺寸档位挂在卡片上，内容按档位增删由 CSS 负责
+  el.dataset.size = w.size || 'm';
   // 玻璃背景按卡片在舞台里的坐标反推裁切位置
   el.style.setProperty('--shot-x', `${-w.x}px`);
   el.style.setProperty('--shot-y', `${-w.y}px`);
@@ -114,6 +174,7 @@ function buildCard(w) {
   el.className = 'card surface';
   el.dataset.id = w.id;
   el.dataset.kind = w.kind;
+  el.dataset.size = w.size || 'm';
 
   const body = document.createElement('div');
   body.className = 'body';
@@ -127,20 +188,24 @@ function buildCard(w) {
     body.innerHTML = `<div class="k">组件加载失败</div>`;
   }
 
+  // 尺寸只能从预设里选。以前是拖右下角把手（还能拉成任意宽高），
+  // 结果每个组件都是「差几个像素」的尺寸，怎么摆都对不齐。
+  const sizeBtns = sizesOf(w.kind)
+    .map((k) => {
+      const [sw, sh] = dimsOf(k);
+      return `<button class="sbtn${k === (w.size || 'm') ? ' on' : ''}" data-set-size="${k}"
+                title="${SIZE_LABEL[k]}：${sw}×${sh}">${SIZE_LABEL[k]}</button>`;
+    })
+    .join('');
+
   el.insertAdjacentHTML(
     'beforeend',
     `<div class="wtool">
-       <button data-tool="shrink" title="缩小">
-         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 6h7"/></svg>
-       </button>
-       <button data-tool="grow" title="放大">
-         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 2.5v7M2.5 6h7"/></svg>
-       </button>
+       ${sizeBtns}
        <button data-tool="remove" title="移除组件">
          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>
        </button>
-     </div>
-     <div class="grip" title="拖动改变大小"></div>`
+     </div>`
   );
 
   return { el, inst };
@@ -181,32 +246,16 @@ function renderWidgets() {
 function bindCard(el, w) {
   el.addEventListener('pointerdown', (e) => {
     if (!S.edit) return;
-    if (e.target.closest('.wtool') || e.target.closest('.grip')) return;
+    if (e.target.closest('.wtool')) return;
     if (e.button !== 0) return;
-    startDrag(e, el, w, 'move');
+    startDrag(e, el, w);
   });
 
   el.addEventListener('click', (e) => {
+    const size = e.target.closest('.wtool [data-set-size]')?.dataset.setSize;
+    if (size) return setCardSize(el, w, size);
     const tool = e.target.closest('[data-tool]')?.dataset.tool;
-    if (!tool) return;
     if (tool === 'remove') return removeWidget(w.id);
-    const def = REGISTRY[w.kind];
-    const step = tool === 'grow' ? 1.12 : 1 / 1.12;
-    const min = def.min || [180, 80];
-    const nw = clamp(Math.round(w.w * step), min[0], S.design.w - w.x);
-    const nh = clamp(Math.round(w.h * step), min[1], S.design.h - w.y);
-    w.w = nw;
-    w.h = nh;
-    place(el, w);
-    S.mounted.get(w.id)?.inst?.onSizeChange?.();
-    save();
-    scheduleHit();
-  });
-
-  const grip = el.querySelector('.grip');
-  grip.addEventListener('pointerdown', (e) => {
-    if (!S.edit) return;
-    startDrag(e, el, w, 'resize');
   });
 
   // 双击天气卡直接改地区：这是最常用的设置，不该藏进托盘
@@ -216,6 +265,26 @@ function bindCard(el, w) {
       pickPlace();
     });
   }
+}
+
+/** 换档位：尺寸、位置、内容一起重排。
+ *  位置也顺手夹回屏幕内——大号比中号高 60px，贴着底边的卡片会掉出去。 */
+function setCardSize(el, w, size) {
+  if (!sizesOf(w.kind).includes(size) || w.size === size) return;
+  const [nw, nh] = dimsOf(size);
+  w.size = size;
+  w.w = nw;
+  w.h = nh;
+  w.x = Math.round(clamp(w.x, 0, Math.max(0, S.design.w - nw)));
+  w.y = Math.round(clamp(w.y, 0, Math.max(0, S.design.h - nh)));
+
+  place(el, w);
+  el.querySelectorAll('[data-set-size]').forEach((b) => b.classList.toggle('on', b.dataset.setSize === size));
+  paintShotVars();
+  S.mounted.get(w.id)?.inst?.onSizeChange?.();
+  save();
+  scheduleHit();
+  scheduleTone();
 }
 
 /* ---- 网格吸附 ----
@@ -291,27 +360,16 @@ function snapStart(pos, size, lines) {
   return best;
 }
 
-/** 终点吸附：card 的右/下 边去贴（改大小时用） */
-function snapEnd(pos, size, lines) {
-  let best = null;
-  const at = pos + size;
-  for (const l of lines) {
-    const d = Math.abs(at - l);
-    if (d <= SNAP_TOL && (!best || d < best.d)) best = { d, size: l - pos, line: l };
-  }
-  return best;
-}
-
 const onGrid = (v) => Math.round(v / GRID) * GRID;
 
-function startDrag(e, el, w, mode) {
+/** 拖动改位置。尺寸不在这里改——尺寸只有三档预设，由 .wtool 里的按钮切 */
+function startDrag(e, el, w) {
   e.preventDefault();
   e.stopPropagation();
 
   const sx = e.clientX;
   const sy = e.clientY;
-  const origin = { x: w.x, y: w.y, w: w.w, h: w.h };
-  const min = REGISTRY[w.kind]?.min || [180, 80];
+  const origin = { x: w.x, y: w.y };
 
   S.force = true;
   updateHit();
@@ -321,23 +379,13 @@ function startDrag(e, el, w, mode) {
     const dy = (ev.clientY - sy) / S.scale;
     const { xs, ys } = refLines(w.id);
 
-    if (mode === 'move') {
-      const nx = clamp(origin.x + dx, 0, S.design.w - w.w);
-      const ny = clamp(origin.y + dy, 0, S.design.h - w.h);
-      const hitX = snapStart(nx, w.w, xs);
-      const hitY = snapStart(ny, w.h, ys);
-      w.x = Math.round(hitX ? clamp(hitX.pos, 0, S.design.w - w.w) : onGrid(nx));
-      w.y = Math.round(hitY ? clamp(hitY.pos, 0, S.design.h - w.h) : onGrid(ny));
-      showGuides(hitX?.line ?? null, hitY?.line ?? null);
-    } else {
-      const nw = clamp(origin.w + dx, min[0], S.design.w - w.x);
-      const nh = clamp(origin.h + dy, min[1], S.design.h - w.y);
-      const hitX = snapEnd(w.x, nw, xs);
-      const hitY = snapEnd(w.y, nh, ys);
-      w.w = Math.round(clamp(hitX ? hitX.size : onGrid(nw), min[0], S.design.w - w.x));
-      w.h = Math.round(clamp(hitY ? hitY.size : onGrid(nh), min[1], S.design.h - w.y));
-      showGuides(hitX?.line ?? null, hitY?.line ?? null);
-    }
+    const nx = clamp(origin.x + dx, 0, S.design.w - w.w);
+    const ny = clamp(origin.y + dy, 0, S.design.h - w.h);
+    const hitX = snapStart(nx, w.w, xs);
+    const hitY = snapStart(ny, w.h, ys);
+    w.x = Math.round(hitX ? clamp(hitX.pos, 0, S.design.w - w.w) : onGrid(nx));
+    w.y = Math.round(hitY ? clamp(hitY.pos, 0, S.design.h - w.h) : onGrid(ny));
+    showGuides(hitX?.line ?? null, hitY?.line ?? null);
     place(el, w);
     scheduleTone();
   };
@@ -347,7 +395,6 @@ function startDrag(e, el, w, mode) {
     window.removeEventListener('pointerup', onUp);
     S.force = false;
     hideGuides();
-    S.mounted.get(w.id)?.inst?.onSizeChange?.();
     save();
     updateHit();
     scheduleTone();
@@ -360,13 +407,15 @@ function startDrag(e, el, w, mode) {
 function addWidget(kind) {
   const def = REGISTRY[kind];
   if (!def) return;
-  const [w, h] = def.size;
+  const size = def.def || 'm';
+  const [w, h] = dimsOf(size);
   const spot = freeSpot(w, h);
   S.cfg.widgets.push({
     id: `${kind}-${Date.now().toString(36)}`,
     kind,
     x: spot.x,
     y: spot.y,
+    size,
     w,
     h
   });
@@ -443,7 +492,7 @@ function guardOpen(p) {
 const handlers = {
   icons: (paths) => invoke('desktop_icons', { paths }),
   open: (path) => guardOpen(invoke('open_path', { path })),
-  reveal: (path) => invoke('reveal_path', { path }),
+  reveal: (path) => guardOpen(invoke('reveal_path', { path })),
   fold: (id) => {
     const f = new Set(S.cfg.organizer.folded || []);
     f.has(id) ? f.delete(id) : f.add(id);
@@ -543,7 +592,7 @@ const handlers = {
       [
         { label: decodeURIComponent(path.split(/[\\/]/).pop()), head: true },
         { label: '打开', act: () => guardOpen(invoke('open_path', { path })) },
-        { label: '打开所在位置', act: () => invoke('reveal_path', { path }) },
+        { label: '打开所在位置', act: () => guardOpen(invoke('reveal_path', { path })) },
         { sep: true },
         { label: '移出到桌面', act: () => handlers.moveOut([path]) },
         { sep: true },
@@ -1099,7 +1148,7 @@ function dumpLayout() {
       design: S.design,
       widgets: [...document.querySelectorAll('#stage .card')].map((el) => {
         const r = el.getBoundingClientRect();
-        return [el.dataset.kind, Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+        return [el.dataset.kind, el.dataset.size, Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
       }),
       organizer: (() => {
         const r = $('#organizer').getBoundingClientRect();

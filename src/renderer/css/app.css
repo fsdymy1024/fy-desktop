@@ -687,6 +687,215 @@ body[data-glass="1"] .surface::before {
 }
 
 /* ==========================================================================
+   尺寸档位
+   只有三档：小 a×a、中 2a×a、大 2a×1.5a（a = 120 设计像素）。
+   同一档在所有组件上宽高完全一致，横着竖着都能对齐。
+   小号不是把内容整体缩小，而是「只留最要紧的」——字挤在一起比裁掉更难看。
+   ========================================================================== */
+
+/* 编辑模式里工具条上的档位按钮 */
+.wtool .sbtn {
+  width: auto;
+  min-width: 17px;
+  height: 18px;
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 1;
+  color: rgba(26, 22, 19, 0.6);
+}
+
+.wtool .sbtn.on {
+  background: rgba(226, 98, 44, 0.16);
+  color: #c8501f;
+  font-weight: 700;
+}
+
+/* ---- 天气 ---- */
+/* 小：只留今天。城市 / 气温 / 天气 / 高低温，逐时预报整行收起 */
+.card[data-kind="weather"][data-size="s"] .wx-hours {
+  display: none;
+}
+
+.card[data-kind="weather"][data-size="s"] .wx-mid {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: auto;
+}
+
+.card[data-kind="weather"][data-size="s"] .wx-temp {
+  font-size: 36px;
+}
+
+.card[data-kind="weather"][data-size="s"] .wx-meta {
+  padding-top: 0;
+  gap: 1px;
+}
+
+/* 大：气温块在剩余空间里居中，逐时行贴底。
+   否则「最高/最低」和分隔线之间会空出一大块，看着像没画完。 */
+.card[data-kind="weather"][data-size="l"] .wx-mid {
+  margin: auto 0;
+}
+
+.card[data-kind="weather"][data-size="l"] .wx-temp {
+  font-size: 46px;
+}
+
+.card[data-kind="weather"][data-size="l"] .wx-hours .h {
+  gap: 4px;
+}
+
+.card[data-kind="weather"][data-size="l"] .wx-hours .h svg {
+  width: 16px;
+  height: 16px;
+}
+
+.card[data-kind="weather"][data-size="l"] .wx-hours .h b {
+  font-size: 11px;
+}
+
+/* ---- 时钟 ---- */
+/* 小：表盘收起，只留数字时间 + 日期 */
+.card[data-kind="clock"][data-size="s"] .ck-dial-slot {
+  display: none;
+}
+
+.card[data-kind="clock"][data-size="s"] .ck {
+  justify-content: center;
+}
+
+.card[data-kind="clock"][data-size="s"] .ck-time {
+  /* 120 宽扣掉内边距只剩 94：34px 的「23:29」再加秒就顶出去了 */
+  font-size: 26px;
+}
+
+.card[data-kind="clock"][data-size="s"] .ck-time small {
+  font-size: 11px;
+}
+
+.card[data-kind="clock"][data-size="s"] .ck-zone {
+  display: none;
+}
+
+.card[data-kind="clock"][data-size="l"] .ck-time {
+  font-size: 32px;
+}
+
+.card[data-kind="clock"][data-size="l"] .ck-date {
+  font-size: 11.5px;
+}
+
+/* ---- 数字时钟 ---- */
+.card[data-kind="digital"][data-size="s"] .dg-time {
+  font-size: 28px;
+}
+
+.card[data-kind="digital"][data-size="s"] .dg-time small {
+  font-size: 11px;
+}
+
+.card[data-kind="digital"][data-size="l"] .dg-time {
+  font-size: 54px;
+}
+
+/* ---- 日历 ---- */
+/* 中号只有 120 高，网格得压薄一点才放得下 6 行 */
+.card[data-kind="calendar"][data-size="m"] .cd {
+  gap: 9px;
+}
+
+.card[data-kind="calendar"][data-size="m"] .cd-today {
+  min-width: 52px;
+}
+
+.card[data-kind="calendar"][data-size="m"] .cd-day {
+  font-size: 30px;
+}
+
+.card[data-kind="calendar"][data-size="m"] .cd-week span,
+.card[data-kind="calendar"][data-size="m"] .cd-grid span {
+  font-size: 8.5px;
+}
+
+.card[data-kind="calendar"][data-size="m"] .cd-grid {
+  gap: 0;
+}
+
+.card[data-kind="calendar"][data-size="m"] .cd-grid span {
+  height: 12px;
+}
+
+.card[data-kind="calendar"][data-size="l"] .cd-day {
+  font-size: 40px;
+}
+
+.card[data-kind="calendar"][data-size="l"] .cd-grid span {
+  height: 19px;
+  font-size: 10px;
+}
+
+.card[data-kind="calendar"][data-size="l"] .cd-week span {
+  font-size: 9.5px;
+}
+
+/* ---- 系统监视 ---- */
+/* 小：只留三项百分比，进度条与走势图都收起 */
+.card[data-kind="system"][data-size="s"] .bar,
+.card[data-kind="system"][data-size="s"] .sys-spark,
+.card[data-kind="system"][data-size="s"] .sys-foot {
+  display: none;
+}
+
+.card[data-kind="system"][data-size="s"] .sys-rows {
+  margin: auto 0;
+  gap: 5px;
+}
+
+.card[data-kind="system"][data-size="s"] .sys-row {
+  grid-template-columns: 1fr auto;
+  font-size: 10px;
+}
+
+.card[data-kind="system"][data-size="s"] .sys-row b {
+  font-size: 16px;
+  font-weight: 300;
+}
+
+.card[data-kind="system"][data-size="l"] .sys-spark {
+  height: 54px;
+}
+
+/* ---- 网络 ---- */
+/* 小：只留上下行速率，图表整块收起 */
+.card[data-kind="network"][data-size="s"] .net-spark,
+.card[data-kind="network"][data-size="s"] .net-foot,
+.card[data-kind="network"][data-size="s"] .net-on {
+  display: none;
+}
+
+.card[data-kind="network"][data-size="s"] .net-mid {
+  margin-top: auto;
+  align-items: center;
+}
+
+.card[data-kind="network"][data-size="s"] .net-num b {
+  font-size: 30px;
+}
+
+.card[data-kind="network"][data-size="s"] .net-link {
+  max-width: 62px;
+}
+
+.card[data-kind="network"][data-size="l"] .net-mid {
+  align-items: center;
+}
+
+.card[data-kind="network"][data-size="l"] .net-num b {
+  font-size: 30px;
+}
+
+/* ==========================================================================
    收纳面板
    ========================================================================== */
 .panel {
@@ -1447,15 +1656,28 @@ body[data-tone="dark"]:not([data-material="dusk"]) .cell.empty .ic {
   background: rgba(255, 255, 255, 0.04);
 }
 
-/* 原色：不铺底图，各卡片用自己的浅色底。
-   v0.5 之前是 rgba(252,247,240,.94)——几乎是纯白，铺在深色壁纸上像贴了一张
-   发光的纸，看久了刺眼。改成带灰的纸色、再压一档不透明度，字依然清楚，
-   但不再抢视线。 */
+/* 石墨（原「原色」）：不铺底图，用一块实心深灰。
+   以前这里铺的是近纯白 rgba(252,247,240,.94)——在深色壁纸上就是一排发光的
+   白纸，比壁纸本身还亮，看久了刺眼。深灰实底放在任何壁纸上都不抢视线，
+   字转浅色后对比度反而更高。
+   和「暮色」的区别：暮色仍然是壁纸的模糊影子（颜色跟着壁纸跑），
+   石墨是一块不带任何纹理的中性色。 */
+body[data-material="solid"] {
+  --ink: rgba(246, 242, 236, 0.95);
+  --ink2: rgba(246, 242, 236, 0.66);
+  --ink3: rgba(246, 242, 236, 0.44);
+  --line: rgba(255, 255, 255, 0.12);
+  --fill: rgba(42, 39, 36, 0.82);
+  --fill-2: rgba(42, 39, 36, 0.9);
+  --stroke: rgba(255, 255, 255, 0.1);
+  --shadow: 0 20px 40px -28px rgba(0, 0, 0, 0.72), 0 3px 8px -5px rgba(0, 0, 0, 0.4);
+  color: var(--ink);
+}
+
 body[data-material="solid"] .surface {
-  background: rgba(237, 232, 224, 0.9);
-  border-color: rgba(120, 90, 70, 0.14);
-  box-shadow: 0 14px 32px -24px rgba(46, 28, 14, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  background: rgba(43, 40, 37, 0.82);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 body[data-material="solid"] .surface::before,
@@ -1464,13 +1686,28 @@ body[data-material="solid"] .surface::after {
 }
 
 body[data-material="solid"] .cell {
-  background: rgba(255, 255, 255, 0.34);
-  border-color: rgba(120, 90, 70, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 body[data-material="solid"] .cell:hover {
-  background: rgba(255, 255, 255, 0.66);
-  border-color: rgba(120, 90, 70, 0.18);
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+body[data-material="solid"] .iconbtn,
+body[data-material="solid"] .ghost,
+body[data-material="solid"] .net-link {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+body[data-material="solid"] .bar {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+body[data-material="solid"] .cell.empty .ic {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 /* 卡片背后偏暗时自动切浅色字（由前端采样底图后加 .on-dark） */

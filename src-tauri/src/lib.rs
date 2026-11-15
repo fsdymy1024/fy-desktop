@@ -25,18 +25,10 @@ pub static BORN: OnceLock<std::time::Instant> = OnceLock::new();
 /// 前端有没有跑到 `ui_ready`。窗口显示已经不再依赖它，这个标志只用于诊断与兜底。
 pub static UI_READY: AtomicBool = AtomicBool::new(false);
 
-/// 各组件的默认尺寸（设计像素）。改这里等于改第一版默认布局。
+/// 各组件的默认尺寸（设计像素）。
+/// 现在只作为「预设档位」的推导结果存在：小 a×a、中 2a×a、大 2a×1.5a。
 pub fn widget_size(kind: &str) -> (f64, f64) {
-    match kind {
-        "weather" => (296.0, 128.0),
-        "clock" => (296.0, 200.0),
-        "calendar" => (296.0, 150.0),
-        "system" => (296.0, 150.0),
-        "network" => (296.0, 138.0),
-        "notes" => (296.0, 116.0),
-        "digital" => (208.0, 90.0),
-        _ => (296.0, 140.0),
-    }
+    config::dims(config::default_size(kind))
 }
 
 pub fn run() {

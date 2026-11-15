@@ -6,6 +6,18 @@
 
 import { esc, pad2, speed, spark, wxIcon, WEEK } from './util.js';
 
+/** 预设尺寸（设计像素）。和后端 config.rs 的 A / dims() 是同一套数：
+ *  小 a×a、中 2a×a、大 2a×1.5a，a = 120。
+ *  尺寸不再靠拖拉，一律从这三档里选，组件之间才能对得齐。 */
+export const A = 120;
+export const SIZE_DIMS = {
+  s: [A, A],
+  m: [A * 2, A],
+  l: [A * 2, A * 1.5]
+};
+export const SIZE_LABEL = { s: '小', m: '中', l: '大' };
+export const dimsOf = (size) => SIZE_DIMS[size] || SIZE_DIMS.m;
+
 /**
  * 时钟是否显示秒。托盘菜单可切换，切换后下一次 tick 就生效——
  * 不重建组件，避免卡片闪一下。
@@ -72,8 +84,8 @@ export const REGISTRY = {
     kind: 'weather',
     name: '天气',
     desc: '实时温度、天气状况与逐时预报',
-    size: [296, 128],
-    min: [204, 104],
+    sizes: ['s', 'm', 'l'],
+    def: 'm',
     preview: () => `<div class="mini"><b>17°</b>多云 · 最高 20°</div>`,
     mount(body) {
       body.innerHTML = `
@@ -134,8 +146,8 @@ export const REGISTRY = {
     kind: 'clock',
     name: '模拟时钟',
     desc: '实时走针，附日期与本地时区',
-    size: [296, 200],
-    min: [196, 128],
+    sizes: ['s', 'm', 'l'],
+    def: 'm',
     preview: () => `<div class="mini"><b>16:21</b>模拟表盘</div>`,
     mount(body) {
       body.innerHTML = `<div class="ck"><div class="ck-dial-slot"></div>
@@ -202,8 +214,8 @@ export const REGISTRY = {
     kind: 'digital',
     name: '数字时钟',
     desc: '极简大字号时间',
-    size: [208, 90],
-    min: [132, 62],
+    sizes: ['s', 'm', 'l'],
+    def: 's',
     preview: () => `<div class="mini"><b>16:21</b>数字时间</div>`,
     mount(body) {
       body.innerHTML = `<div class="dg"><div class="dg-time num"></div><div class="dg-date"></div></div>`;
@@ -225,8 +237,8 @@ export const REGISTRY = {
     kind: 'calendar',
     name: '日历',
     desc: '当月网格与今日高亮',
-    size: [296, 150],
-    min: [212, 126],
+    sizes: ['m', 'l'],
+    def: 'm',
     preview: () => `<div class="mini"><b>15</b>11月 · 周日</div>`,
     mount(body) {
       body.innerHTML = `<div class="cd">
@@ -276,8 +288,8 @@ export const REGISTRY = {
     kind: 'system',
     name: '系统监视',
     desc: 'CPU / 内存 / 磁盘与 CPU 走势',
-    size: [296, 150],
-    min: [204, 116],
+    sizes: ['s', 'm', 'l'],
+    def: 'm',
     preview: () => `<div class="mini"><b>12%</b>CPU · 内存 · 磁盘</div>`,
     mount(body) {
       body.innerHTML = `
@@ -342,8 +354,8 @@ export const REGISTRY = {
     kind: 'network',
     name: '网络',
     desc: '上下行速率、延迟、信号与 IP',
-    size: [296, 138],
-    min: [200, 112],
+    sizes: ['s', 'm', 'l'],
+    def: 'm',
     preview: () => `<div class="mini"><b>12.4</b>MB/s · 延迟 18ms</div>`,
     mount(body) {
       body.innerHTML = `
@@ -432,8 +444,8 @@ export const REGISTRY = {
     kind: 'notes',
     name: '备忘录',
     desc: '随手记两行，自动保存',
-    size: [296, 116],
-    min: [160, 72],
+    sizes: ['m', 'l'],
+    def: 'm',
     preview: () => `<div class="mini"><b>…</b>随手记</div>`,
     mount(body, ctx) {
       body.innerHTML = `<div class="nt-head">备忘录</div>
