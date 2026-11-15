@@ -1,0 +1,78 @@
+//! 托盘。桌面常驻应用没有主窗口可关，托盘就是唯一的入口。
+
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager};
+
+pub fn create(app: &AppHandle) -> tauri::Result<()> {
+    let add = MenuItem::with_id(app, "add", "添加组件…", true, None::<&str>)?;
+    let edit = MenuItem::with_id(app, "edit", "编辑布局", true, None::<&str>)?;
+    let glass = MenuItem::with_id(app, "glass", "刷新桌面底图", true, None::<&str>)?;
+    let auto = CheckMenuItem::with_id(app, "autostart", "开机自启", true, false, None::<&str>)?;
+    let root = MenuItem::with_id(app, "root", "打开收纳文件夹", true, None::<&str>)?;
+    let conf = MenuItem::with_id(app, "conf", "设置文件…", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出 fy-desktop", true, None::<&str>)?;
+
+    let menu = Menu::with_items(
+        app,
+        &[
+            &add,
+            &edit,
+            &glass,
+            &auto,
+            &PredefinedMenuItem::separator(app)?,
+            &root,
+            &conf,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+
+    let auto_item = auto.clone();
+
+    TrayIconBuilder::with_id("main")
+        .icon(app.default_window_icon().cloned().unwrap())
+        .tooltip("fy-desktop")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "add" => {
+                let _ = app.emit("tray:action", "gallery");
+            }
+            "edit" => {
+                let _ = app.emit("tray:action", "edit");
+            }
+            "glass" => {
+                let _ = app.emit("tray:action", "glass");
+            }
+            "autostart" => {
+                let now = crate::autostart::is_enabled();
+                let after = if crate::autostart::set(!now).is_ok() {
+                    crate::autostart::is_enabled()
+                } else {
+                    now
+                };
+                let _ = auto_item.set_checked(after);
+                if let Some(state) = app.try_state::<crate::state::AppState>() {
+                    state.with_config(|c| c.autostart = after);
+                }
+                let _ = app.emit("autostart:changed", after);
+            }
+            "root" => {
+                if let Some(state) = app.try_state::<crate::state::AppState>() {
+                    let root = crate::desktop::root_dir(&state.config());
+                    let _ = std::fs::create_dir_all(&root);
+                    crate::desktop::open_path(&root.to_string_lossy());
+                }
+            }
+            "conf" => crate::commands::open_config_dir(),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+
+    // 托盘勾选状态以系统注册表为准，别只看配置
+    let _ = auto.set_checked(crate::autostart::is_enabled());
+
+    Ok(())
+}

@@ -1,181 +1,30 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
+
 <head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'">
-<title>fy-desktop</title>
-<link rel="stylesheet" href="css/app.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>fy-desktop</title>
+  <link rel="stylesheet" href="css/app.css" />
 </head>
-<body data-mat="follow">
 
-<!-- ===================== 天气 ===================== -->
-<section class="widget glass w-weather" id="w-weather" data-widget="weather">
-  <div class="grip"></div>
-  <div class="weather-top">
-    <div>
-      <div class="city" id="wxCity">上海</div>
-      <div class="temp" id="wxTemp">--°</div>
-    </div>
-    <div>
-      <div class="cond" id="wxCond"></div>
-      <div class="hilo" id="wxHilo">--</div>
+<body data-material="glass" data-edit="0">
+  <!-- 舞台按缩放比整体放大，内部一律用「设计像素」布局 -->
+  <div id="stage">
+    <div id="widgets"></div>
+    <section id="organizer" class="panel"></section>
+    <div id="editbar" hidden>
+      <button data-act="add" class="ebtn">＋ 添加组件</button>
+      <button data-act="done" class="ebtn primary">完成</button>
+      <span class="ehint">拖动卡片移动 · 右下角拖动改大小</span>
     </div>
   </div>
-  <div class="hours" id="wxHours"></div>
-</section>
 
-<!-- ===================== 时钟 ===================== -->
-<section class="widget glass w-clock" id="w-clock" data-widget="clock">
-  <div class="grip"></div>
-  <div class="clock-wrap" id="clockFace"></div>
-</section>
+  <div id="gallery" hidden></div>
+  <div id="menu" hidden></div>
+  <div id="toast" hidden></div>
 
-<!-- ===================== 日历 ===================== -->
-<section class="widget glass w-calendar" id="w-calendar" data-widget="calendar">
-  <div class="grip"></div>
-  <div class="cal-top" id="calTop">星期日</div>
-  <div class="cal-day" id="calDay">--</div>
-  <div class="cal-bot" id="calBot">--</div>
-</section>
-
-<!-- ===================== 系统监视 ===================== -->
-<section class="widget glass w-system" id="w-system" data-widget="system">
-  <div class="grip"></div>
-  <div class="sys-head"><span>系统监视</span><em id="sysUp">--</em></div>
-  <div class="sys-body">
-    <div class="meters">
-      <div class="meter"><span>CPU</span><i><b id="barCpu" style="width:0%"></b></i><em id="valCpu">0%</em></div>
-      <div class="meter mem"><span>内存</span><i><b id="barMem" style="width:0%"></b></i><em id="valMem">0%</em></div>
-      <div class="meter disk"><span>磁盘</span><i><b id="barDisk" style="width:0%"></b></i><em id="valDisk">0%</em></div>
-    </div>
-    <svg class="spark" id="cpuSpark" viewBox="0 0 96 44" preserveAspectRatio="none">
-      <defs><linearGradient id="spG" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#e0673a" stop-opacity=".26"/>
-        <stop offset="1" stop-color="#e0673a" stop-opacity="0"/>
-      </linearGradient></defs>
-      <path id="sparkArea" d="" fill="url(#spG)"/>
-      <path id="sparkLine" d="" fill="none" stroke="#e0673a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>
-    </svg>
-  </div>
-</section>
-
-<!-- ===================== 网络 ===================== -->
-<section class="widget glass w-network" id="w-network" data-widget="network">
-  <div class="grip"></div>
-  <div class="net-head">
-    <span class="title">网络</span>
-    <span class="net-state" id="netState"><i></i><span id="netStateText">在线</span></span>
-    <span class="link" id="netLink" title="当前链路">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <path d="M2.5 8.5a15 15 0 0 1 19 0"/><path d="M6 12.4a10 10 0 0 1 12 0"/><path d="M9.4 16.2a5 5 0 0 1 5.2 0"/><circle cx="12" cy="19.6" r="1.1" fill="currentColor" stroke="none"/>
-      </svg>
-      <span id="netSsid">以太网</span>
-    </span>
-  </div>
-  <div class="net-body">
-    <div class="net-main">
-      <div class="net-num"><b id="netDown">0.0</b><em id="netDownUnit">KB/s</em></div>
-      <div class="net-up">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>
-        <b id="netUp">0</b><span id="netUpUnit">KB/s</span>
-      </div>
-      <div class="net-spark">
-        <svg id="netSpark" viewBox="0 0 104 42" preserveAspectRatio="none">
-          <defs><linearGradient id="netG" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#2b7de9" stop-opacity=".28"/>
-            <stop offset="1" stop-color="#2b7de9" stop-opacity="0"/>
-          </linearGradient></defs>
-          <path id="netArea" d="" fill="url(#netG)"/>
-          <path id="netLine" d="" fill="none" stroke="#2b7de9" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>
-        </svg>
-      </div>
-    </div>
-  </div>
-  <div class="net-foot">
-    <span class="kv">延迟 <b id="netPing">--</b> ms</span>
-    <span class="kv">信号
-      <span class="sig" id="netSig"><i></i><i></i><i></i><i></i></span>
-      <b id="netSigText">--</b>
-    </span>
-    <span class="ip sep" id="netIp">--</span>
-  </div>
-</section>
-
-<!-- ===================== 备忘录 ===================== -->
-<section class="widget glass w-notes" id="w-notes" data-widget="notes">
-  <div class="grip"></div>
-  <div class="notes-head">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 3.5h12v17H6z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
-    备忘录
-  </div>
-  <ul class="todo" id="noteList"></ul>
-</section>
-
-<!-- ===================== 收纳格子 ===================== -->
-<section class="org glass" id="w-organizer" data-widget="organizer">
-  <header class="org-head">
-    <span class="org-logo">
-      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.4" height="6.4" rx="1.8"/><rect x="13.6" y="4" width="6.4" height="6.4" rx="1.8"/><rect x="4" y="13.6" width="6.4" height="6.4" rx="1.8"/><rect x="13.6" y="13.6" width="6.4" height="6.4" rx="1.8"/></svg>
-    </span>
-    <div class="org-title">
-      <h2>桌面收纳</h2>
-      <p id="orgSub">正在扫描桌面…</p>
-    </div>
-    <span class="grow"></span>
-    <button class="pill-btn" id="btnScan" title="重新扫描桌面">重新扫描</button>
-    <button class="icon-btn" id="btnTidyDir" title="打开收纳目录">
-      <svg viewBox="0 0 24 24"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.6l2 2.4h6a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2z"/></svg>
-    </button>
-    <button class="icon-btn" id="btnMore" title="更多">
-      <svg viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>
-    </button>
-  </header>
-  <div class="shelves" id="shelves"></div>
-  <footer class="org-foot">
-    <span id="orgFoot">正在读取…</span>
-    <span class="actions">
-      <button class="ghost-sm" id="btnRestore" style="display:none">还原</button>
-      <button class="primary-sm" id="btnTidy">一键整理</button>
-    </span>
-  </footer>
-</section>
-
-<!-- ===================== 编辑模式提示 ===================== -->
-<div class="edittip">
-  <b>编辑布局</b>
-  <span>拖动小组件到任意位置，松手自动保存</span>
-  <button id="btnExitEdit">完成</button>
-</div>
-
-<!-- ===================== 右键菜单 ===================== -->
-<div class="ctx" id="ctx"></div>
-
-<!-- ===================== 确认弹层 ===================== -->
-<div class="modal" id="modal">
-  <div class="modal-box">
-    <h3 id="modalTitle">确认操作</h3>
-    <p id="modalDesc"></p>
-    <div class="modal-list" id="modalList"></div>
-    <div class="modal-foot">
-      <button class="btn-ghost" id="modalCancel">取消</button>
-      <button class="btn-primary" id="modalOk">确定</button>
-    </div>
-  </div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script type="module" src="js/main.js"></script>
-
-<!-- SVG 图标库 -->
-<svg style="display:none" aria-hidden="true">
-  <symbol id="g-folder" viewBox="0 0 24 24"><path d="M3.2 7.4a2 2 0 0 1 2-2h3.6l2 2.4h6a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2z"/></symbol>
-  <symbol id="g-link" viewBox="0 0 24 24"><path d="M10.4 13.6a3.6 3.6 0 0 0 5.1 0l2.8-2.8a3.6 3.6 0 0 0-5.1-5.1l-1.4 1.4"/><path d="M13.6 10.4a3.6 3.6 0 0 0-5.1 0l-2.8 2.8a3.6 3.6 0 0 0 5.1 5.1l1.4-1.4"/></symbol>
-  <symbol id="g-app" viewBox="0 0 24 24"><rect x="3.6" y="3.6" width="7.2" height="7.2" rx="2"/><rect x="13.2" y="3.6" width="7.2" height="7.2" rx="2"/><rect x="3.6" y="13.2" width="7.2" height="7.2" rx="2"/><rect x="13.2" y="13.2" width="7.2" height="7.2" rx="2"/></symbol>
-  <symbol id="g-doc" viewBox="0 0 24 24"><path d="M6 3.5h7.5L19 9v11.5H6z"/><path d="M13.5 3.5V9H19"/></symbol>
-  <symbol id="g-image" viewBox="0 0 24 24"><rect x="3.4" y="5" width="17.2" height="14" rx="2.6"/><circle cx="8.8" cy="10" r="1.5"/><path d="M20.6 16.4l-4.6-4.6-7.4 7"/></symbol>
-  <symbol id="g-archive" viewBox="0 0 24 24"><rect x="3.2" y="4" width="17.6" height="5" rx="1.6"/><path d="M5.2 9v9.2a1.6 1.6 0 0 0 1.6 1.6h10.4a1.6 1.6 0 0 0 1.6-1.6V9"/><path d="M10 13.2h4"/></symbol>
-  <symbol id="g-wave" viewBox="0 0 24 24"><path d="M3 12h2l2-5 3 10 3-13 3 13 2-5h3"/></symbol>
-</svg>
+  <script type="module" src="js/main.js"></script>
 </body>
+
 </html>

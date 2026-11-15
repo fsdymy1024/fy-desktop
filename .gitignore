@@ -7,6 +7,9 @@ out/
 build/
 *.asar
 
+# 打包工具链（本地下载，不入库）
+.build-tools/
+
 # 日志与临时文件
 *.log
 npm-debug.log*
@@ -26,3 +29,7 @@ desktop.ini
 # 本地环境
 .env
 .env.local
+
+# Rust / Tauri 构建产物
+src-tauri/target/
+src-tauri/gen/

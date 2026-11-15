@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "fy-desktop",
+  "version": "0.2.0",
+  "identifier": "com.fy.desktop",
+  "build": {
+    "frontendDist": "../src/renderer"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "fy-desktop",
+        "url": "index.html",
+        "width": 1280,
+        "height": 800,
+        "transparent": true,
+        "decorations": false,
+        "resizable": false,
+        "focus": false,
+        "visible": false,
+        "shadow": false,
+        "skipTaskbar": true,
+        "alwaysOnBottom": true,
+        "dragDropEnabled": true,
+        "backgroundColor": "#00000000"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "桌面玻璃小组件与快捷方式收纳",
+    "longDescription": "fy-desktop 把天气、时钟、日历、系统监视、网络等小组件放回桌面，并用玻璃收纳格子管理桌面快捷方式。",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "compression": "lzma"
+      }
+    }
+  }
+}

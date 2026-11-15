@@ -1,228 +1,262 @@
 /**
- * 桌面收纳格子
- * ------------------------------------------------------------------
- * 数据来自主进程扫描的真实桌面条目（用户桌面 + 公共桌面）。
- * 默认是「虚拟分组」：只在配置里记录归属，不动任何文件。
- * 只有点「一键整理」并二次确认后，才会把散落文件移动到收纳目录，
- * 并且写 _manifest.json 支持「还原」。
+ * 桌面收纳面板。
+ *
+ * 每个分组就是磁盘上的一个真实文件夹（桌面/fy-desktop/<组名>），
+ * 所以「拖进格子」= 真的移动文件，双击 = 真的打开。
+ * 最后一组「待整理」是虚拟的：显示桌面上还没进任何格子的东西。
  */
 
-import { $, toast, esc } from './util.js';
-import { openCtx, confirmBox } from './overlay.js';
+import { esc } from './util.js';
 
-const PALETTE = ['g-blue', 'g-slate', 'g-orange', 'g-sky', 'g-teal', 'g-violet', 'g-pink', 'g-amber', 'g-red', 'g-green'];
+const COLS = 8;
+const LOOSE_PREVIEW = 16;
 
-let state = { groups: [], total: 0, loose: 0 };
-let tidyDir = '';
-let restoredVisible = false;
-const folded = new Map();
+const ICON_CACHE = new Map();
+let renderToken = 0;
+let looseExpanded = false;
 
-function hash(str) {
+const PALETTE = ['#3d8bf0', '#b16ce0', '#2fa27c', '#e2712c', '#8d9aa6', '#d94f70', '#0f9bb0'];
+
+function hash(s) {
   let h = 0;
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
-  return Math.abs(h);
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
 }
 
-function iconHTML(item) {
-  const label = item.badge || (item.base ? item.base.trim().charAt(0) : '·');
-
-  switch (item.kind) {
-    case 'folder':
-      return `<div class="ic g-amber"><svg viewBox="0 0 24 24"><use href="#g-folder"/></svg></div>`;
-    case 'link':
-      return `<div class="ic g-sky"><svg viewBox="0 0 24 24"><use href="#g-link"/></svg></div>`;
-    case 'image':
-      return `<div class="ic g-green"><svg viewBox="0 0 24 24"><use href="#g-image"/></svg></div>`;
-    case 'archive':
-      return `<div class="ic g-slate"><svg viewBox="0 0 24 24"><use href="#g-archive"/></svg></div>`;
-    case 'media':
-      return `<div class="ic g-pink"><svg viewBox="0 0 24 24"><use href="#g-wave"/></svg></div>`;
-    case 'doc':
-      return `<div class="ic g-blue"><span class="lt${label.length > 2 ? ' xs' : ' sm'}">${esc(label)}</span></div>`;
-    case 'sheet':
-      return `<div class="ic g-green"><span class="lt${label.length > 2 ? ' xs' : ' sm'}">${esc(label)}</span></div>`;
-    case 'slide':
-      return `<div class="ic g-orange"><span class="lt${label.length > 2 ? ' xs' : ' sm'}">${esc(label)}</span></div>`;
-    case 'shortcut': {
-      const cls = PALETTE[hash(item.name) % PALETTE.length];
-      return `<div class="ic ${cls}"><span class="lt">${esc(item.initial || '·')}</span></div>`;
-    }
-    default: {
-      const cls = PALETTE[hash(item.name) % PALETTE.length];
-      return `<div class="ic ${cls}"><span class="lt sm">${esc(item.initial || label || 'F')}</span></div>`;
-    }
-  }
+function placeholder(item, groupId) {
+  const letter = (item.name.replace(/\.[^.]+$/, '').trim()[0] || '·').toUpperCase();
+  const color = PALETTE[hash(item.name + groupId) % PALETTE.length];
+  return `<span class="ph" style="background:${color}">${esc(letter)}</span>`;
 }
 
-function cellHTML(item) {
-  return `<div class="cell" data-path="${esc(item.path)}" title="${esc(item.name)}">
-    ${iconHTML(item)}
-    <span>${esc(item.base || item.name)}</span>
-  </div>`;
+function cellHtml(item, groupId, extraClass = '') {
+  return `<div class="cell ${extraClass}" data-path="${esc(item.path)}" data-group="${esc(groupId)}"
+      draggable="true" title="${esc(item.name)}">
+      <div class="ic" data-path="${esc(item.path)}">${placeholder(item, groupId)}</div>
+      <span class="lb">${esc(item.name.replace(/\.[^.]+$/, ''))}</span>
+    </div>`;
 }
 
-function render() {
-  const cols = window.__fyCols || 8;
-  const host = $('#shelves');
+function padCells(count) {
+  const rest = (COLS - (count % COLS)) % COLS;
+  if (!count || !rest) return '';
+  return Array(rest)
+    .fill('<div class="cell empty"><div class="ic"></div><span class="lb">空位</span></div>')
+    .join('');
+}
 
-  host.innerHTML = state.groups.map((g) => {
-    const isFolded = folded.has(g.id) ? folded.get(g.id) : g.folded;
-    const items = g.items || [];
-    let cells = items.map(cellHTML).join('');
+function shelfHtml(group, folded, isLoose) {
+  const items = group.items || [];
+  const shown = isLoose && !looseExpanded ? items.slice(0, LOOSE_PREVIEW) : items;
+  const more = items.length - shown.length;
 
-    // 补齐整行：让每一组都是一个完整的收纳盒，而不是参差的豆腐块
-    const pad = items.length ? (cols - (items.length % cols)) % cols : 0;
-    for (let i = 0; i < pad; i++) cells += `<div class="cell empty"><div class="ic"></div><span>空位</span></div>`;
+  const cells =
+    shown.map((it) => cellHtml(it, group.id)).join('') +
+    padCells(shown.length) +
+    (more > 0
+      ? `<div class="cell" data-more="1" title="展开全部 ${items.length} 项">
+           <div class="ic"><span class="ph" style="background:rgba(120,90,70,.42)">+${more}</span></div>
+           <span class="lb">更多</span>
+         </div>`
+      : '');
 
-    if (!items.length) {
-      cells = g.inbox
-        ? `<div class="empty-note">桌面已经没有散落的图标了。</div>`
-        : `<div class="empty-note">这个格子还是空的。右键桌面图标 →「移入分组」即可收纳。</div>`;
-    }
+  const empty = !items.length
+    ? `<div class="shelf-hint">${isLoose ? '桌面已经很干净' : '空 · 把快捷方式拖进来'}</div>`
+    : `<div class="cells" style="--cols:${COLS}">${cells}</div>`;
 
-    return `<div class="shelf${isFolded ? ' folded' : ''}" data-id="${g.id}" style="--cols:${cols}">
-      <div class="shelf-head">
-        <span class="dot" style="--c:${g.color}"></span>
-        <h3>${esc(g.name)}</h3>
+  return `<div class="shelf ${folded ? 'folded' : ''}" data-g="${esc(group.id)}">
+      <div class="shelf-head" data-g="${esc(group.id)}">
+        <span class="swatch" style="background:${esc(group.color || '#8d9aa6')}"></span>
+        <h3>${esc(group.name)}</h3>
         <span class="count">${items.length}</span>
-        ${isFolded ? '<span class="fold-hint">已折叠</span>' : ''}
-        <span class="grow"></span>
-        <button class="chev" data-fold="${g.id}" title="${isFolded ? '展开' : '折叠'}">
-          <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        <button class="fold" data-fold="${esc(group.id)}" title="${folded ? '展开' : '折叠'}">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg>
         </button>
       </div>
-      <div class="cells">${cells}</div>
+      ${folded ? '' : empty}
     </div>`;
-  }).join('');
-
-  const names = state.groups.filter(g => !g.inbox).length;
-  $('#orgSub').textContent = `${names} 组 · ${state.total} 项快捷方式`;
-  $('#orgFoot').innerHTML = `桌面共 <b>${state.total}</b> 项 · 待整理 <b>${state.loose}</b> 项`;
-  $('#btnRestore').style.display = restoredVisible ? '' : 'none';
 }
 
-export async function refresh() {
-  try {
-    const data = await window.fy.deskList();
-    state = data;
-    for (const g of data.groups) {
-      if (!folded.has(g.id)) folded.set(g.id, Boolean(g.folded));
-    }
-    render();
-  } catch (err) {
-    $('#orgSub').textContent = '扫描失败';
-    console.error('[organizer]', err);
-  }
-}
+export function renderOrganizer(el, cfg, view, handlers) {
+  const token = ++renderToken;
+  const scrollTop = el.querySelector('.shelves')?.scrollTop || 0;
 
-/* ---------------- 交互 ---------------- */
+  const groups = view
+    ? view.groups.map((g) => ({ ...g }))
+    : cfg.organizer.groups.map((g) => ({ ...g, items: [] }));
 
-function cellMenu(item, x, y) {
-  const targets = state.groups.filter(g => !g.inbox);
-  openCtx(x, y, {
-    title: item.name,
-    items: [
-      { label: '打开', onClick: () => window.fy.deskOpen(item.path) },
-      { label: '在资源管理器中显示', onClick: () => window.fy.deskReveal(item.path) },
-      { sep: true },
-      ...targets.map(g => ({
-        label: `移入「${g.name}」`,
-        onClick: async () => {
-          await window.fy.deskAssign(item.path, g.id);
-          toast(`已移入「${g.name}」`);
-          refresh();
+  const loose = {
+    id: '__loose',
+    name: '待整理',
+    color: '#c9a227',
+    items: view?.loose || []
+  };
+
+  const foldedIds = new Set(cfg.organizer.folded || []);
+  const total = groups.reduce((n, g) => n + (g.items?.length || 0), 0);
+  const looseTotal = loose.items.length;
+
+  el.innerHTML = `
+    <div class="body">
+      <div class="org-head">
+        <span class="org-title">桌面收纳</span>
+        <span class="org-sub">${groups.length} 组 · ${total} 项</span>
+        <div class="org-tools">
+          <button class="iconbtn" data-act="add-group" title="新建分组">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 2.5v7M2.5 6h7"/></svg>
+          </button>
+          <button class="iconbtn" data-act="open-root" title="在资源管理器中打开收纳文件夹">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M1.6 4.2a1 1 0 0 1 1-1h3l1.2 1.6h4.6a1 1 0 0 1 1 1v4.4a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z"/></svg>
+          </button>
+          <button class="iconbtn" data-act="refresh" title="重新扫描">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 7a5 5 0 1 0 1.6-3.7"/><path d="M2 2.4v2.8h2.8"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="shelves">
+        ${groups.map((g) => shelfHtml(g, foldedIds.has(g.id), false)).join('')}
+        ${shelfHtml(loose, false, true)}
+      </div>
+      <div class="org-foot">
+        <span>桌面还有 <b>${looseTotal}</b> 项未收纳</span>
+        <span class="spacer"></span>
+        <button class="pbtn" data-act="tidy">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h10M5.6 4V2.6h2.8V4M3.4 4l.6 8h6l.6-8"/></svg>
+          一键整理
+        </button>
+      </div>
+    </div>`;
+
+  const shelves = el.querySelector('.shelves');
+  if (shelves && scrollTop) shelves.scrollTop = scrollTop;
+
+  // ---- 图标：先用色块占位，再分批取真实图标 ----
+  const slots = [...el.querySelectorAll('.cell .ic[data-path]')];
+  const missing = [...new Set(slots.map((s) => s.dataset.path))].filter((p) => !ICON_CACHE.has(p));
+
+  const apply = () => {
+    if (token !== renderToken) return;
+    el.querySelectorAll('.cell .ic[data-path]').forEach((node) => {
+      const url = ICON_CACHE.get(node.dataset.path);
+      if (url && node.querySelector('.ph')) {
+        node.innerHTML = `<img src="${url}" alt="" draggable="false">`;
+      }
+    });
+  };
+  apply();
+
+  if (missing.length) {
+    (async () => {
+      for (let i = 0; i < missing.length; i += 8) {
+        const chunk = missing.slice(i, i + 8);
+        try {
+          const pairs = await handlers.icons(chunk);
+          for (const [p, url] of pairs) ICON_CACHE.set(p, url);
+        } catch {
+          /* 单个图标失败不该影响整个面板 */
         }
-      })),
-      { label: '移出分组', onClick: async () => {
-        await window.fy.deskAssign(item.path, null);
-        toast('已移出分组');
-        refresh();
-      } }
-    ]
-  });
-}
+        apply();
+        if (token !== renderToken) return;
+      }
+    })();
+  }
 
-export function initOrganizer(opts = {}) {
-  tidyDir = opts.tidyDir || '';
+  // ---- 事件 ----
+  el.onclick = (e) => {
+    const foldBtn = e.target.closest('[data-fold]');
+    if (foldBtn) {
+      handlers.fold(foldBtn.dataset.fold);
+      return;
+    }
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'add-group') return handlers.addGroup();
+    if (act === 'open-root') return handlers.openRoot();
+    if (act === 'refresh') return handlers.refresh();
+    if (act === 'tidy') return handlers.tidy();
 
-  const host = $('#shelves');
-
-  host.addEventListener('click', (e) => {
-    const fold = e.target.closest('[data-fold]');
-    if (fold) {
-      const id = fold.dataset.fold;
-      folded.set(id, !folded.get(id));
-      render();
+    const more = e.target.closest('[data-more]');
+    if (more) {
+      looseExpanded = true;
+      handlers.rerender();
       return;
     }
 
     const cell = e.target.closest('.cell[data-path]');
-    if (cell) window.fy.deskOpen(cell.dataset.path);
-  });
+    if (cell) handlers.open(cell.dataset.path);
+  };
 
-  host.addEventListener('contextmenu', (e) => {
+  el.oncontextmenu = (e) => {
     const cell = e.target.closest('.cell[data-path]');
     if (!cell) return;
     e.preventDefault();
-    const item = state.groups.flatMap(g => g.items || []).find(i => i.path === cell.dataset.path);
-    if (item) cellMenu(item, e.clientX, e.clientY);
-  });
+    handlers.menu(e, cell.dataset.path, cell.dataset.group);
+  };
 
-  $('#btnScan').addEventListener('click', () => { refresh(); toast('已重新扫描桌面'); });
+  // ---- 拖拽 ----
+  el.ondragstart = (e) => {
+    const cell = e.target.closest('.cell[data-path]');
+    if (!cell) return;
+    e.dataTransfer.setData('text/plain', cell.dataset.path);
+    e.dataTransfer.setData('application/x-fy-path', cell.dataset.path);
+    e.dataTransfer.effectAllowed = 'move';
+    handlers.dragStart?.(true);
+  };
 
-  $('#btnTidyDir').addEventListener('click', () => window.fy.openTidyDir());
+  el.ondragend = () => handlers.dragStart?.(false);
 
-  $('#btnMore').addEventListener('click', (e) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    openCtx(r.left - 120, r.bottom + 6, {
-      items: [
-        { label: '重新扫描桌面', onClick: () => refresh() },
-        { label: '打开收纳目录', onClick: () => window.fy.openTidyDir() },
-        { sep: true },
-        { label: '还原收纳的文件', onClick: () => restore() },
-        { label: '编辑布局', onClick: () => window.fy.setEditMode(true) },
-        { sep: true },
-        { label: '退出 fy-desktop', onClick: () => window.fy.quit() }
-      ]
+  const shelfAt = (y) => {
+    let hit = null;
+    el.querySelectorAll('.shelf[data-g]').forEach((s) => {
+      if (s.dataset.g === '__loose') return;
+      const r = s.getBoundingClientRect();
+      if (y >= r.top && y <= r.bottom) hit = s.dataset.g;
     });
+    return hit;
+  };
+
+  el.ondragover = (e) => {
+    const gid = shelfAt(e.clientY);
+    if (!gid) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    el.querySelectorAll('.cell.drop').forEach((c) => c.classList.remove('drop'));
+    const target = el.querySelector(`.shelf[data-g="${gid}"]`);
+    target?.querySelectorAll('.cell').forEach((c) => c.classList.add('drop'));
+  };
+
+  el.ondragleave = () => {
+    el.querySelectorAll('.cell.drop').forEach((c) => c.classList.remove('drop'));
+  };
+
+  el.ondrop = async (e) => {
+    const gid = shelfAt(e.clientY);
+    el.querySelectorAll('.cell.drop').forEach((c) => c.classList.remove('drop'));
+    if (!gid) return;
+    e.preventDefault();
+    const path = e.dataTransfer.getData('application/x-fy-path') || e.dataTransfer.getData('text/plain');
+    if (!path) return;
+    if (gid === e.target.closest('.cell[data-group]')?.dataset.group) return; // 拖回原组，不折腾
+    await handlers.moveInto([path], gid);
+  };
+
+  return { shelves };
+}
+
+/** OS 文件拖进来时，按坐标找落在哪个分组 */
+export function groupAtPoint(el, x, y) {
+  let hit = null;
+  el.querySelectorAll('.shelf[data-g]').forEach((s) => {
+    if (s.dataset.g === '__loose') return;
+    const r = s.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) hit = s.dataset.g;
   });
+  return hit;
+}
 
-  $('#btnTidy').addEventListener('click', async () => {
-    const plan = await window.fy.deskPlan();
-    if (!plan.length) { toast('桌面已经没有可收纳的文件了'); return; }
+export function resetLoose() {
+  looseExpanded = false;
+}
 
-    const names = plan.slice(0, 8).map(p => p.path);
-    if (plan.length > 8) names.push(`…等 ${plan.length} 个文件`);
-
-    const ok = await confirmBox({
-      title: `把 ${plan.length} 个桌面文件收进收纳区？`,
-      desc: `目标目录：${tidyDir || '桌面/fy-desktop 收纳区'}。只会移动文件，不会删除；移动记录会写进 _manifest.json，随时可以一键还原。`,
-      list: names,
-      okText: '开始整理',
-      danger: true
-    });
-    if (!ok) return;
-
-    const r = await window.fy.deskTidy();
-    restoredVisible = true;
-    toast(`已收纳 ${r.moved.length} 项`);
-    refresh();
-  });
-
-  $('#btnRestore').addEventListener('click', () => restore());
-
-  async function restore() {
-    const ok = await confirmBox({
-      title: '把收纳区里的文件还原回桌面？',
-      desc: '会按照 _manifest.json 的记录，把文件放回移动前的位置。已存在的同名文件不会被覆盖。',
-      okText: '还原'
-    });
-    if (!ok) return;
-    const r = await window.fy.deskRestore();
-    toast(r.ok ? `已还原 ${r.restored} 项` : '找不到收纳记录');
-    refresh();
-  }
-
-  window.fy.on('desk:refresh', () => refresh());
-  refresh();
+export function clearIconCache() {
+  ICON_CACHE.clear();
 }

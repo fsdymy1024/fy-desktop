@@ -1,275 +1,418 @@
 /**
- * 小组件渲染
- * 每个 init 函数自己管自己的 DOM 与定时器，main.js 只负责调用与布局。
+ * 组件注册表。
+ * 每个组件自己负责「画一次」和「数据来了怎么改」，主流程只管调度。
+ * mount() 返回可选的 weather/metrics/tick 回调与 destroy()。
  */
 
-import { $, speed, weatherIcon, polyline, esc } from './util.js';
+import { esc, pad2, speed, spark, wxIcon, WEEK } from './util.js';
 
-/* ============================================================
-   时钟
-   ============================================================ */
-export function initClock() {
-  const host = $('#clockFace');
-  const S = 148;
-  const C = S / 2;
-  const NS = 'http://www.w3.org/2000/svg';
+const dialSize = (body) => Math.min(body.clientHeight, body.clientWidth * 0.52, 140);
 
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${S} ${S}`);
-
-  const add = (tag, attrs) => {
-    const el = document.createElementNS(NS, tag);
-    for (const k in attrs) el.setAttribute(k, attrs[k]);
-    svg.appendChild(el);
-    return el;
-  };
-
-  // 60 格刻度
+function dialSvg(size) {
+  const c = size / 2;
+  const r = c - 5;
+  let ticks = '';
   for (let i = 0; i < 60; i++) {
-    const a = ((i * 6 - 90) * Math.PI) / 180;
-    const big = i % 5 === 0;
-    const r1 = C - (big ? 9 : 6);
-    const r2 = C - 3;
-    add('line', {
-      x1: C + Math.cos(a) * r1, y1: C + Math.sin(a) * r1,
-      x2: C + Math.cos(a) * r2, y2: C + Math.sin(a) * r2,
-      stroke: 'currentColor', 'stroke-width': big ? 1.8 : 1,
-      'stroke-linecap': 'round', opacity: big ? 0.55 : 0.2
-    });
+    const a = (i * 6 * Math.PI) / 180;
+    const major = i % 5 === 0;
+    const inner = major ? r - 6.5 : r - 3;
+    const x1 = (c + Math.sin(a) * r).toFixed(2);
+    const y1 = (c - Math.cos(a) * r).toFixed(2);
+    const x2 = (c + Math.sin(a) * inner).toFixed(2);
+    const y2 = (c - Math.cos(a) * inner).toFixed(2);
+    ticks += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="currentColor" stroke-width="${major ? 1.5 : 0.7}" opacity="${major ? 0.55 : 0.2}" stroke-linecap="round"/>`;
   }
+  const hourHand = (r * 0.5).toFixed(1);
+  const minHand = (r * 0.72).toFixed(1);
+  const secHand = (r * 0.78).toFixed(1);
+  return `
+  <svg class="ck-dial" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${c}" cy="${c}" r="${r + 2.5}" fill="none" stroke="currentColor" stroke-width="0.8" opacity="0.14"/>
+    ${ticks}
+    <g class="h-hour">
+      <line x1="${c}" y1="${c + 4}" x2="${c}" y2="${c - hourHand}" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" opacity="0.85"/>
+    </g>
+    <g class="h-min">
+      <line x1="${c}" y1="${c + 5}" x2="${c}" y2="${c - minHand}" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+    </g>
+    <g class="h-sec">
+      <line x1="${c}" y1="${c + 7}" x2="${c}" y2="${c - secHand}" stroke="#e2622c" stroke-width="1" stroke-linecap="round"/>
+    </g>
+    <circle cx="${c}" cy="${c}" r="2.4" fill="#e2622c"/>
+  </svg>`;
+}
 
-  // 12 个数字
-  for (let n = 1; n <= 12; n++) {
-    const a = ((n * 30 - 90) * Math.PI) / 180;
-    const r = C - 22;
-    const t = add('text', {
-      x: C + Math.cos(a) * r, y: C + Math.sin(a) * r + 3.2,
-      'text-anchor': 'middle', 'font-size': 8.5, 'font-weight': 500,
-      fill: 'currentColor', opacity: 0.58, 'font-family': 'inherit'
-    });
-    t.textContent = n;
+export const REGISTRY = {
+  /* ---------------- 天气 ---------------- */
+  weather: {
+    kind: 'weather',
+    name: '天气',
+    desc: '实时温度、天气状况与逐时预报',
+    size: [296, 128],
+    min: [248, 118],
+    preview: () => `<div class="mini"><b>17°</b>多云 · 最高 20°</div>`,
+    mount(body) {
+      body.innerHTML = `
+        <div class="wx-head"><span class="wx-city">天气</span><span class="wx-src"></span></div>
+        <div class="wx-mid">
+          <div class="wx-temp num">--<sup>°</sup></div>
+          <div class="wx-meta">
+            <div class="wx-cond">${wxIcon('cloud')}<span>获取中</span></div>
+            <div class="wx-hilo">最高 -- · 最低 --</div>
+          </div>
+        </div>
+        <div class="wx-hours"></div>`;
+
+      const city = body.querySelector('.wx-city');
+      const src = body.querySelector('.wx-src');
+      const temp = body.querySelector('.wx-temp');
+      const cond = body.querySelector('.wx-cond');
+      const hilo = body.querySelector('.wx-hilo');
+      const hours = body.querySelector('.wx-hours');
+
+      const empty = (msg) => {
+        city.textContent = '天气';
+        temp.innerHTML = '--<sup>°</sup>';
+        cond.innerHTML = `<span>${esc(msg)}</span>`;
+        hilo.textContent = '检查网络后重试';
+        hours.innerHTML = '';
+      };
+
+      return {
+        weather(w) {
+          if (!w) return empty('暂不可用');
+          city.textContent = w.city || '天气';
+          src.textContent = w.source === 'wttr.in' ? 'wttr' : '';
+          temp.innerHTML = `${w.temp}<sup>°</sup>`;
+          cond.innerHTML = `${wxIcon(w.icon)}<span>${esc(w.cond)}</span>`;
+          hilo.textContent = `最高 ${w.high}° · 最低 ${w.low}°`;
+          hours.innerHTML = (w.hours || [])
+            .slice(0, 6)
+            .map(
+              (h) => `<div class="h"><span>${esc(h.label)}</span>${wxIcon(h.icon, 13)}<b>${h.temp}°</b></div>`
+            )
+            .join('');
+        },
+        weatherError() {
+          empty('天气不可用');
+        },
+        onSizeChange() {},
+      };
+    }
+  },
+
+  /* ---------------- 模拟时钟 ---------------- */
+  clock: {
+    kind: 'clock',
+    name: '模拟时钟',
+    desc: '实时走针，附日期与本地时区',
+    size: [296, 200],
+    min: [210, 150],
+    preview: () => `<div class="mini"><b>16:21</b>模拟表盘</div>`,
+    mount(body) {
+      body.innerHTML = `<div class="ck"><div class="ck-dial-slot"></div>
+        <div class="ck-side">
+          <div class="ck-time num">--:--</div>
+          <div class="ck-date"></div>
+          <div class="ck-zone"><span class="dot" style="background:#35ab68"></span>本地时间</div>
+        </div></div>`;
+      const slot = body.querySelector('.ck-dial-slot');
+      const time = body.querySelector('.ck-time');
+      const date = body.querySelector('.ck-date');
+
+      let size = 0;
+      let hands = null;
+
+      const build = () => {
+        const s = Math.max(96, Math.round(dialSize(body.parentElement) || 132));
+        if (Math.abs(s - size) < 6) return;
+        size = s;
+        slot.innerHTML = dialSvg(s);
+        hands = {
+          h: slot.querySelector('.h-hour'),
+          m: slot.querySelector('.h-min'),
+          s: slot.querySelector('.h-sec'),
+          c: s / 2
+        };
+      };
+
+      const tick = () => {
+        const d = new Date();
+        time.textContent = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+        date.textContent = `${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]}`;
+        if (!hands) build();
+        if (!hands) return;
+        const sec = d.getSeconds();
+        const min = d.getMinutes() + sec / 60;
+        const hour = (d.getHours() % 12) + min / 60;
+        const { c } = hands;
+        hands.h.setAttribute('transform', `rotate(${hour * 30} ${c} ${c})`);
+        hands.m.setAttribute('transform', `rotate(${min * 6} ${c} ${c})`);
+        hands.s.setAttribute('transform', `rotate(${sec * 6} ${c} ${c})`);
+      };
+
+      tick();
+      const timer = setInterval(tick, 1000);
+      return {
+        tick,
+        onSizeChange: () => {
+          size = 0;
+          build();
+          tick();
+        },
+        destroy: () => clearInterval(timer)
+      };
+    }
+  },
+
+  /* ---------------- 数字时钟 ---------------- */
+  digital: {
+    kind: 'digital',
+    name: '数字时钟',
+    desc: '极简大字号时间',
+    size: [208, 90],
+    min: [160, 74],
+    preview: () => `<div class="mini"><b>16:21</b>数字时间</div>`,
+    mount(body) {
+      body.innerHTML = `<div class="dg"><div class="dg-time num"></div><div class="dg-date"></div></div>`;
+      const t = body.querySelector('.dg-time');
+      const d = body.querySelector('.dg-date');
+      const tick = () => {
+        const now = new Date();
+        t.innerHTML = `${pad2(now.getHours())}:${pad2(now.getMinutes())}<small>${pad2(now.getSeconds())}</small>`;
+        d.textContent = `${now.getMonth() + 1}月${now.getDate()}日 周${WEEK[now.getDay()]}`;
+      };
+      tick();
+      const timer = setInterval(tick, 1000);
+      return { tick, destroy: () => clearInterval(timer) };
+    }
+  },
+
+  /* ---------------- 日历 ---------------- */
+  calendar: {
+    kind: 'calendar',
+    name: '日历',
+    desc: '当月网格与今日高亮',
+    size: [296, 150],
+    min: [248, 132],
+    preview: () => `<div class="mini"><b>15</b>11月 · 周日</div>`,
+    mount(body) {
+      body.innerHTML = `<div class="cd">
+          <div class="cd-today"><div class="cd-day num"></div><div class="cd-mw"></div></div>
+          <div class="cd-month"><div class="cd-week"></div><div class="cd-grid"></div></div>
+        </div>`;
+      const day = body.querySelector('.cd-day');
+      const mw = body.querySelector('.cd-mw');
+      const week = body.querySelector('.cd-week');
+      const grid = body.querySelector('.cd-grid');
+
+      // 周一开头，符合国内日历习惯
+      week.innerHTML = ['一', '二', '三', '四', '五', '六', '日'].map((w) => `<span>${w}</span>`).join('');
+
+      const paint = () => {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = now.getMonth();
+        const today = now.getDate();
+        day.textContent = today;
+        mw.textContent = `${m + 1}月 · 周${WEEK[now.getDay()]}`;
+
+        const first = new Date(y, m, 1);
+        const offset = (first.getDay() + 6) % 7;
+        const days = new Date(y, m + 1, 0).getDate();
+        const prevDays = new Date(y, m, 0).getDate();
+
+        let html = '';
+        for (let i = offset - 1; i >= 0; i--) html += `<span class="dim">${prevDays - i}</span>`;
+        for (let d = 1; d <= days; d++) {
+          html += `<span class="${d === today ? 'now' : ''}">${d}</span>`;
+        }
+        const tail = (7 - ((offset + days) % 7)) % 7;
+        for (let d = 1; d <= tail; d++) html += `<span class="dim">${d}</span>`;
+        grid.innerHTML = html;
+      };
+
+      paint();
+      // 跨天时自动翻页
+      const timer = setInterval(paint, 60_000);
+      return { destroy: () => clearInterval(timer) };
+    }
+  },
+
+  /* ---------------- 系统监视 ---------------- */
+  system: {
+    kind: 'system',
+    name: '系统监视',
+    desc: 'CPU / 内存 / 磁盘与 CPU 走势',
+    size: [296, 150],
+    min: [250, 136],
+    preview: () => `<div class="mini"><b>12%</b>CPU · 内存 · 磁盘</div>`,
+    mount(body) {
+      body.innerHTML = `
+        <div class="sys-rows">
+          <div class="sys-row"><span>CPU</span><div class="bar cpu"><i style="width:0%"></i></div><b class="v-cpu">--</b></div>
+          <div class="sys-row"><span>内存</span><div class="bar mem"><i style="width:0%"></i></div><b class="v-mem">--</b></div>
+          <div class="sys-row"><span>磁盘</span><div class="bar disk"><i style="width:0%"></i></div><b class="v-disk">--</b></div>
+        </div>
+        <svg class="sys-spark" preserveAspectRatio="none"></svg>
+        <div class="sys-foot"><span class="up">--</span><span class="cores"></span></div>`;
+
+      const bar = (k) => body.querySelector(`.bar.${k} i`);
+      const val = (k) => body.querySelector(`.v-${k}`);
+      const svg = body.querySelector('.sys-spark');
+      const up = body.querySelector('.up');
+      const cores = body.querySelector('.cores');
+
+      const hist = [];
+      let seeded = false;
+
+      const drawSpark = () => {
+        const w = svg.clientWidth || 260;
+        const h = svg.clientHeight || 30;
+        const { line, area } = spark(hist, w, h, 1.5, 100);
+        svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+        svg.innerHTML = `
+          <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#3d8bf0" stop-opacity=".22"/>
+            <stop offset="1" stop-color="#3d8bf0" stop-opacity="0"/>
+          </linearGradient></defs>
+          <path d="${area}" fill="url(#sg)"/>
+          <path d="${line}" fill="none" stroke="#3d8bf0" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>`;
+      };
+
+      return {
+        metrics(s) {
+          if (!s) return;
+          bar('cpu').style.width = `${s.cpu}%`;
+          bar('mem').style.width = `${s.mem}%`;
+          bar('disk').style.width = `${s.disk}%`;
+          val('cpu').textContent = `${Math.round(s.cpu)}%`;
+          val('mem').textContent = `${Math.round(s.mem)}%`;
+          val('disk').textContent = `${Math.round(s.disk)}%`;
+          up.textContent = `已运行 ${Math.floor(s.uptime / 3600)}h`;
+          cores.textContent = `${s.cores} 核`;
+
+          if (!seeded) {
+            for (let i = 0; i < 10; i++) hist.push(s.cpu);
+            seeded = true;
+          }
+          hist.push(s.cpu);
+          if (hist.length > 40) hist.shift();
+          drawSpark();
+        },
+        onSizeChange: drawSpark
+      };
+    }
+  },
+
+  /* ---------------- 网络 ---------------- */
+  network: {
+    kind: 'network',
+    name: '网络',
+    desc: '上下行速率、延迟、信号与 IP',
+    size: [296, 138],
+    min: [252, 128],
+    preview: () => `<div class="mini"><b>12.4</b>MB/s · 延迟 18ms</div>`,
+    mount(body) {
+      body.innerHTML = `
+        <div class="net-top">
+          <span>网络</span>
+          <span class="net-on"><i></i>在线</span>
+          <span class="net-link"><span class="txt">连接中</span></span>
+        </div>
+        <div class="net-mid">
+          <div class="net-main">
+            <div class="net-num"><b class="down">--</b><em class="downU">KB/s</em></div>
+            <div class="net-up">↓ 上行 <b class="up">--</b><span class="upU">KB/s</span></div>
+          </div>
+          <svg class="net-spark" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="net-foot">
+          <span>延迟 <b class="lat">--</b> ms</span>
+          <span class="sigwrap">信号 <span class="sig"><i></i><i></i><i></i><i></i></span></span>
+          <span class="ip"></span>
+        </div>`;
+
+      const q = (s) => body.querySelector(s);
+      const down = q('.down');
+      const downU = q('.downU');
+      const up = q('.up');
+      const upU = q('.upU');
+      const lat = q('.lat');
+      const ip = q('.ip');
+      const sparkEl = q('.net-spark');
+      const link = q('.net-link .txt');
+      const sigWrap = q('.sigwrap');
+      const bars = body.querySelectorAll('.sig i');
+
+      const drawSpark = (hist) => {
+        const w = sparkEl.clientWidth || 92;
+        const h = sparkEl.clientHeight || 38;
+        const raw = (hist || []).slice(-16);
+        // 采样点不够时用首个真实值向左补齐，曲线从平线开始长
+        const vals = raw.length ? Array(Math.max(0, 16 - raw.length)).fill(raw[0]).concat(raw) : [];
+        const { line, area } = spark(vals, w, h, 2, 32768);
+        sparkEl.setAttribute('viewBox', `0 0 ${w} ${h}`);
+        sparkEl.innerHTML = `
+          <defs><linearGradient id="ng" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#3d8bf0" stop-opacity=".24"/>
+            <stop offset="1" stop-color="#3d8bf0" stop-opacity="0"/>
+          </linearGradient></defs>
+          <path d="${area}" fill="url(#ng)"/>
+          <path d="${line}" fill="none" stroke="#3d8bf0" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+      };
+
+      return {
+        metrics(s) {
+          if (!s) return;
+          const d = speed(s.down);
+          const u = speed(s.up);
+          down.textContent = d.v;
+          downU.textContent = d.u;
+          up.textContent = u.v;
+          upU.textContent = u.u;
+          lat.textContent = s.latency ? String(s.latency) : '--';
+          ip.textContent = s.ip || '';
+
+          const l = s.link || {};
+          link.textContent = l.kind === 'wifi' ? l.ssid || 'Wi-Fi' : l.kind === 'ethernet' ? '有线' : '未连接';
+          if (l.kind === 'wifi' && Number.isFinite(l.signal)) {
+            sigWrap.style.display = '';
+            const on = Math.max(1, Math.ceil(l.signal / 25));
+            bars.forEach((b, i) => b.classList.toggle('on', i < on));
+          } else {
+            // 有线上没有「信号」这个概念，整块隐藏比显示满格更诚实
+            sigWrap.style.display = 'none';
+          }
+          drawSpark(s.down_history);
+        },
+        onSizeChange: () => drawSpark([])
+      };
+    }
+  },
+
+  /* ---------------- 备忘录 ---------------- */
+  notes: {
+    kind: 'notes',
+    name: '备忘录',
+    desc: '随手记两行，自动保存',
+    size: [296, 116],
+    min: [220, 90],
+    preview: () => `<div class="mini"><b>…</b>随手记</div>`,
+    mount(body, ctx) {
+      body.innerHTML = `<div class="nt-head">备忘录</div>
+        <textarea class="nt-area" placeholder="写点什么…" spellcheck="false"></textarea>`;
+      const area = body.querySelector('.nt-area');
+      const key = `fy.note.${ctx.id}`;
+      area.value = localStorage.getItem(key) || '';
+      let timer = 0;
+      area.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => localStorage.setItem(key, area.value), 300);
+      });
+      return { destroy: () => clearTimeout(timer) };
+    }
   }
+};
 
-  const makeHand = (len, w, color, opacity) => add('line', {
-    x1: C, y1: C + 6, x2: C, y2: C - len,
-    stroke: color, 'stroke-width': w, 'stroke-linecap': 'round', opacity
-  });
-
-  const hourHand = makeHand(34, 4.6, 'currentColor', 0.88);
-  const minHand = makeHand(46, 3, 'currentColor', 0.88);
-  const secHand = makeHand(48, 1.1, '#e2622c', 1);
-  add('circle', { cx: C, cy: C, r: 3, fill: '#e2622c' });
-  add('circle', { cx: C, cy: C, r: 1.2, fill: '#fff' });
-
-  host.appendChild(svg);
-
-  const tick = () => {
-    const now = new Date();
-    const s = now.getSeconds();
-    const m = now.getMinutes() + s / 60;
-    const h = (now.getHours() % 12) + m / 60;
-    hourHand.setAttribute('transform', `rotate(${h * 30} ${C} ${C})`);
-    minHand.setAttribute('transform', `rotate(${m * 6} ${C} ${C})`);
-    secHand.setAttribute('transform', `rotate(${s * 6} ${C} ${C})`);
-  };
-  tick();
-  setInterval(tick, 1000);
-}
-
-/* ============================================================
-   日历
-   ============================================================ */
-export function initCalendar() {
-  const WEEK = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
-
-  const tick = () => {
-    const now = new Date();
-    $('#calTop').textContent = WEEK[now.getDay()];
-    $('#calDay').textContent = String(now.getDate());
-
-    // ISO 周数
-    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-    const day = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - day);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const week = Math.ceil(((+d - +yearStart) / 86400000 + 1) / 7);
-    $('#calBot').textContent = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 · 第 ${week} 周`;
-  };
-  tick();
-  setInterval(tick, 30000);
-}
-
-/* ============================================================
-   天气
-   ============================================================ */
-export function initWeather() {
-  const box = $('#w-weather');
-
-  const paint = (data) => {
-    if (!data || data.error) {
-      box.classList.add('is-empty');
-      $('#wxCity').textContent = '天气';
-      $('#wxTemp').textContent = '--';
-      $('#wxCond').innerHTML = '<span>暂时取不到</span>';
-      $('#wxHilo').textContent = '点击重试';
-      $('#wxHours').innerHTML = '';
-      return;
-    }
-    box.classList.remove('is-empty');
-    $('#wxCity').textContent = data.city;
-    $('#wxTemp').textContent = `${data.temp}°`;
-    $('#wxCond').innerHTML = `${weatherIcon(data.icon)}<span>${esc(data.cond)}</span>`;
-    $('#wxHilo').textContent = `最高 ${data.high}° 最低 ${data.low}°`;
-
-    $('#wxHours').innerHTML = (data.hours || []).map(h => `
-      <div class="hr">
-        <span>${esc(h.label)}</span>
-        ${weatherIcon(h.icon)}
-        <b>${h.temp}°</b>
-      </div>`).join('');
-  };
-
-  const load = () => window.fy.weatherGet().then(paint).catch(() => paint(null));
-
-  load();
-  window.fy.on('weather:data', paint);
-
-  // 取不到天气时，点一下重试
-  box.addEventListener('click', () => {
-    if (box.classList.contains('is-empty')) load();
-  });
-}
-
-/* ============================================================
-   系统监视
-   ============================================================ */
-export function initSystem() {
-  const history = [];
-  const MAX = 22;
-  let seeded = false;
-
-  const paint = (s) => {
-    if (!s) return;
-    $('#barCpu').style.width = `${s.cpu}%`;
-    $('#barMem').style.width = `${s.mem}%`;
-    $('#barDisk').style.width = `${s.disk}%`;
-    $('#valCpu').textContent = `${s.cpu}%`;
-    $('#valMem').textContent = `${s.mem}%`;
-    $('#valDisk').textContent = `${s.disk}%`;
-    $('#sysUp').textContent = `已运行 ${s.uptime}h · ${s.cores} 核`;
-
-    // 首帧用当前值铺满，曲线从一条平线开始长，不至于先冒出一根斜线
-    if (!seeded) {
-      for (let i = 0; i < 8; i++) history.push(s.cpu);
-      seeded = true;
-    }
-    history.push(s.cpu);
-    if (history.length > MAX) history.shift();
-    // CPU 固定 0-100 量程，低负载时曲线贴近底部，不会被顶成一块色块
-    const { line, area } = polyline(history, 96, 44, 3, 100);
-    if (line) {
-      $('#sparkLine').setAttribute('d', line);
-      $('#sparkArea').setAttribute('d', area);
-    }
-  };
-
-  window.fy.on('sys:tick', paint);
-}
-
-/* ============================================================
-   网络
-   ============================================================ */
-export function initNetwork() {
-  const paint = (n) => {
-    if (!n) return;
-
-    const down = speed(n.down);
-    const up = speed(n.up);
-    $('#netDown').textContent = down.value;
-    $('#netDownUnit').textContent = down.unit;
-    $('#netUp').textContent = up.value;
-    $('#netUpUnit').textContent = up.unit;
-
-    // 在线状态
-    const state = $('#netState');
-    state.classList.toggle('off', !n.online);
-    $('#netStateText').textContent = n.online ? '在线' : '离线';
-
-    // 链路名称
-    if (n.link && n.link.name) {
-      $('#netSsid').textContent = n.link.name;
-      $('#netLink').title = `${n.link.type === 'wifi' ? 'Wi-Fi' : '有线'} · ${n.link.name}`;
-    }
-
-    // 延迟
-    const ping = $('#netPing');
-    if (n.latency == null) {
-      ping.textContent = '--';
-      ping.style.color = '';
-    } else {
-      ping.textContent = String(n.latency);
-      ping.style.color = n.latency > 120 ? '#d9534f' : n.latency > 60 ? '#e08a2e' : '';
-    }
-
-    // 信号：有线不显示信号格
-    const sig = n.link && Number.isFinite(n.link.signal) ? n.link.signal : null;
-    const barBox = document.querySelector('#netSig');
-    const bars = document.querySelectorAll('#netSig i');
-    if (n.link && n.link.type === 'ethernet') {
-      barBox.style.display = 'none';
-      $('#netSigText').textContent = '有线';
-    } else if (sig == null) {
-      barBox.style.display = '';
-      bars.forEach(b => b.classList.remove('on'));
-      $('#netSigText').textContent = '--';
-    } else {
-      barBox.style.display = '';
-      const on = Math.max(1, Math.ceil(sig / 25));
-      bars.forEach((b, i) => b.classList.toggle('on', i < on));
-      $('#netSigText').textContent = `${sig}%`;
-    }
-
-    // IP
-    $('#netIp').textContent = n.ip || '无连接';
-
-    // 吞吐走势
-    const raw = (n.downHistory || []).slice(-16);
-    // 采样点不足时用第一个真实值向左补齐，曲线从一条平线开始长
-    const series = raw.length ? Array(Math.max(0, 16 - raw.length)).fill(raw[0]).concat(raw) : [];
-    // 量程下限 32KB/s：网速很小时曲线不会贴着顶边
-    const { line, area } = polyline(series, 104, 42, 4, 32768);
-    if (line) {
-      $('#netLine').setAttribute('d', line);
-      $('#netArea').setAttribute('d', area);
-    }
-  };
-
-  window.fy.netSnapshot().then(paint);
-  window.fy.on('net:tick', paint);
-}
-
-/* ============================================================
-   备忘录
-   ============================================================ */
-export function initNotes(items) {
-  const list = $('#noteList');
-  let data = (items || []).slice(0, 3);
-
-  const render = () => {
-    list.innerHTML = data.map((it, i) => `
-      <li class="${it.done ? 'done' : ''}" data-i="${i}">
-        <i></i><span title="${esc(it.text)}">${esc(it.text)}</span>
-      </li>`).join('');
-  };
-
-  list.addEventListener('click', (e) => {
-    const li = e.target.closest('li');
-    if (!li) return;
-    const i = Number(li.dataset.i);
-    data[i].done = !data[i].done;
-    render();
-    window.fy.notesUpdate(data);
-  });
-
-  render();
-}
+export const ORDER = ['weather', 'clock', 'calendar', 'system', 'network', 'notes', 'digital'];

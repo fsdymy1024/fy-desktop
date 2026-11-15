@@ -1,80 +1,59 @@
-/**
- * 公共工具：DOM 选择、速率格式化、天气图标、Toast
- */
+/** 小工具：转义、取整、格式化、走势线生成 */
 
-export const $ = (sel, root = document) => root.querySelector(sel);
-export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+export const pad2 = (n) => String(n).padStart(2, '0');
 
-/** 字节/秒 → 便于阅读的数值与单位 */
-export function speed(bytesPerSec) {
-  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return { value: '0', unit: 'KB/s' };
-  const kb = bytesPerSec / 1024;
-  if (kb < 1) return { value: '0', unit: 'KB/s' };
-  if (kb < 1000) return { value: String(Math.round(kb)), unit: 'KB/s' };
-  const mb = kb / 1024;
-  if (mb < 1000) return { value: mb < 10 ? mb.toFixed(1) : String(Math.round(mb)), unit: 'MB/s' };
-  return { value: (mb / 1024).toFixed(2), unit: 'GB/s' };
-}
+export const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-/** 秒 → "3 分钟前" */
-export function ago(ts) {
-  if (!ts) return '--';
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return `${s} 秒前`;
-  if (s < 3600) return `${Math.round(s / 60)} 分钟前`;
-  if (s < 86400) return `${Math.round(s / 3600)} 小时前`;
-  return `${Math.round(s / 86400)} 天前`;
-}
-
-const WX = {
-  sun: '<circle cx="12" cy="12" r="4.3" fill="#f7b955"/><g stroke="#f0a53d" stroke-width="1.7" stroke-linecap="round"><path d="M12 3.2v1.8M12 19v1.8M3.2 12H5M19 12h1.8M5.8 5.8l1.3 1.3M16.9 16.9l1.3 1.3M5.8 18.2l1.3-1.3M16.9 7.1l1.3-1.3"/></g>',
-  'sun-cloud': '<circle cx="9" cy="9" r="3.4" fill="#f7b955"/><g stroke="#f0a53d" stroke-width="1.5" stroke-linecap="round"><path d="M9 3.4v1.4M3.4 9h1.4M13.2 9h1.4M5.1 5.1l1 1M12.9 5.1l-1 1"/></g><path d="M10.6 19.6a3.2 3.2 0 0 1 .3-6.4 4.7 4.7 0 0 1 8.9 1.1 2.7 2.7 0 0 1-.4 5.3z" fill="#fff" stroke="#9fadb7" stroke-width="1.1"/>',
-  cloud: '<path d="M6.4 18.6a4 4 0 0 1 .45-7.97 5.9 5.9 0 0 1 11.2 1.4 3.3 3.3 0 0 1-.5 6.57z" fill="#fff" stroke="#9fadb7" stroke-width="1.2"/>',
-  rain: '<path d="M6.4 16.4a4 4 0 0 1 .45-7.97 5.9 5.9 0 0 1 11.2 1.4 3.3 3.3 0 0 1-.5 6.57z" fill="#fff" stroke="#9fadb7" stroke-width="1.2"/><g stroke="#5aa9e6" stroke-width="1.8" stroke-linecap="round"><path d="M9 19.6l-.9 2.2M12.4 19.6l-.9 2.2M15.8 19.6l-.9 2.2"/></g>',
-  drizzle: '<path d="M6.4 16.4a4 4 0 0 1 .45-7.97 5.9 5.9 0 0 1 11.2 1.4 3.3 3.3 0 0 1-.5 6.57z" fill="#fff" stroke="#9fadb7" stroke-width="1.2"/><g stroke="#5aa9e6" stroke-width="1.8" stroke-linecap="round"><path d="M10.4 19.4l-.7 1.8M14.4 19.4l-.7 1.8"/></g>',
-  snow: '<path d="M6.4 15.8a4 4 0 0 1 .45-7.97 5.9 5.9 0 0 1 11.2 1.4 3.3 3.3 0 0 1-.5 6.57z" fill="#fff" stroke="#9fadb7" stroke-width="1.2"/><g stroke="#7fb8e8" stroke-width="1.5" stroke-linecap="round"><path d="M9.4 19.4v2.4M8.2 20l2.4 1.2M10.6 20l-2.4 1.2M15.2 19.4v2.4M14 20l2.4 1.2M16.4 20l-2.4 1.2"/></g>',
-  thunder: '<path d="M6.4 15.6a4 4 0 0 1 .45-7.97 5.9 5.9 0 0 1 11.2 1.4 3.3 3.3 0 0 1-.5 6.57z" fill="#fff" stroke="#9fadb7" stroke-width="1.2"/><path d="M12.6 16.4l-2.8 3.6h2.2l-1 2.6 3.6-3.8h-2.2z" fill="#f5b93d"/>',
-  fog: '<g stroke="#9fadb7" stroke-width="1.6" stroke-linecap="round"><path d="M4.4 8.6h15.2M3.4 12.4h17.2M5.4 16.2h13.2M4.6 20h9.6"/></g>'
-};
-
-export function weatherIcon(kind) {
-  const body = WX[kind] || WX.cloud;
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="none">${body}</svg>`;
-}
-
-let toastTimer;
-export function toast(msg) {
-  const el = $('#toast');
-  if (!el) return;
-  el.textContent = msg;
-  el.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 1900);
-}
-
-/** 简单的 html 转义，桌面文件名可能有尖括号 */
 export function esc(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
 }
 
-/** 折线 → SVG path */
-/**
- * 折线 → SVG path
- * maxOverride：固定量程（如 CPU 用 0-100）。不传则按数据最大值自适应，
- * 但全等数据会被顶到顶部变成一块方块，所以调用方最好给个下限。
- */
-export function polyline(values, width, height, pad = 2, maxOverride) {
-  // 少于两个点不成线，返回空串让调用方跳过绘制，避免出现一条斜线
-  if (!values || values.length < 2) return { line: '', area: '' };
-  // 自适应时留 12% 顶部余量，否则峰值会顶到边框
-  const max = Math.max(maxOverride || 0, Math.max(...values) * 1.12, 1);
-  const step = values.length > 1 ? width / (values.length - 1) : width;
-  const pts = values.map((v, i) => {
-    const x = i * step;
-    const y = height - pad - (v / max) * (height - pad * 2);
-    return [x, y];
-  });
+/** 速率：B/s → 人类可读，宽度控制在 4 字符内 */
+export function speed(bytes) {
+  const b = Math.max(0, bytes || 0);
+  if (b < 1024) return { v: b < 10 ? b.toFixed(1) : String(Math.round(b)), u: 'B/s' };
+  if (b < 1024 * 1024) return { v: (b / 1024).toFixed(b < 10240 ? 1 : 0), u: 'KB/s' };
+  if (b < 1024 * 1024 * 1024) return { v: (b / 1048576).toFixed(b < 10485760 ? 1 : 0), u: 'MB/s' };
+  return { v: (b / 1073741824).toFixed(2), u: 'GB/s' };
+}
+
+/** 走势图：fixedMax 给了就用固定量程，否则自适应并留 12% 顶部余量 */
+export function spark(values, w, h, pad = 2, fixedMax = 0) {
+  const vals = (values || []).filter((v) => Number.isFinite(v));
+  if (vals.length < 2) return { line: '', area: '' };
+  const max = Math.max(fixedMax, Math.max(...vals) * 1.12, 1);
+  const stepX = (w - pad * 2) / (vals.length - 1);
+  const y = (v) => h - pad - (clamp(v, 0, max) / max) * (h - pad * 2);
+  const pts = vals.map((v, i) => [pad + i * stepX, y(v)]);
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-  const area = `${line} L${width},${height} L0,${height} Z`;
+  const area = `${line} L${(pad + (vals.length - 1) * stepX).toFixed(1)},${h - pad} L${pad},${h - pad} Z`;
   return { line, area };
 }
+
+/** 天气图标：一套极简线性 SVG，避免引图标库 */
+export function wxIcon(kind, size = 14) {
+  const s = `width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"`;
+  const sun = `<circle cx="12" cy="12" r="4.2" fill="#f7b955" stroke="#eda03a"/><g stroke="#eda03a"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/></g>`;
+  const cloud = (fill = '#fff') =>
+    `<path d="M7.2 18.4a3.3 3.3 0 0 1 .3-6.6 4.9 4.9 0 0 1 9.2 1.1 2.8 2.8 0 0 1 .2 5.5z" fill="${fill}" stroke="#9aa2a8" stroke-width="1.3"/>`;
+  switch (kind) {
+    case 'sun':
+      return `<svg ${s}>${sun}</svg>`;
+    case 'partly':
+      return `<svg ${s}><circle cx="8.6" cy="8.6" r="3" fill="#f7b955" stroke="#eda03a"/><path d="M8 18.4a3 3 0 0 1 .3-6 4.5 4.5 0 0 1 8.5 1 2.6 2.6 0 0 1 .2 5z" fill="#fff" stroke="#9aa2a8" stroke-width="1.3"/></svg>`;
+    case 'rain':
+      return `<svg ${s}>${cloud()}<g stroke="#4d9bd6"><path d="M9.4 20.2l-.7 1.6M13 20.2l-.7 1.6M16.6 20.2l-.7 1.6"/></g></svg>`;
+    case 'snow':
+      return `<svg ${s}>${cloud()}<g stroke="#7fb6dd"><path d="M9.6 20.4v1.8M8.8 21.3h1.6M13.4 20.4v1.8M12.6 21.3h1.6"/></g></svg>`;
+    case 'fog':
+      return `<svg ${s}>${cloud()}<g stroke="#9aa2a8"><path d="M6 21h12"/></g></svg>`;
+    case 'thunder':
+      return `<svg ${s}>${cloud()}<path d="M12.6 18.6l-2 4h3l-1.2 2.4" stroke="#f0a53d" fill="none"/></svg>`;
+    default:
+      return `<svg ${s}>${cloud()}</svg>`;
+  }
+}
+
+export const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
