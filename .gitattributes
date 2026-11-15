@@ -1,0 +1,9 @@
+# 源码统一 LF，避免 Windows 上 CRLF/LF 混用导致整文件 diff
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+
+package-lock.json text eol=lf linguist-generated=true
