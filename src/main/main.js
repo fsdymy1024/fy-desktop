@@ -80,7 +80,7 @@ if (!app.requestSingleInstanceLock()) {
             console.error('[shot] failed', err.message);
           }
           app.quit();
-        }, 2600);
+        }, 7000);
       });
     }
   });

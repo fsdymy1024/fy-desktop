@@ -58,10 +58,16 @@ export function esc(s) {
 }
 
 /** 折线 → SVG path */
-export function polyline(values, width, height, pad = 2) {
+/**
+ * 折线 → SVG path
+ * maxOverride：固定量程（如 CPU 用 0-100）。不传则按数据最大值自适应，
+ * 但全等数据会被顶到顶部变成一块方块，所以调用方最好给个下限。
+ */
+export function polyline(values, width, height, pad = 2, maxOverride) {
   // 少于两个点不成线，返回空串让调用方跳过绘制，避免出现一条斜线
   if (!values || values.length < 2) return { line: '', area: '' };
-  const max = Math.max(...values, 1);
+  // 自适应时留 12% 顶部余量，否则峰值会顶到边框
+  const max = Math.max(maxOverride || 0, Math.max(...values) * 1.12, 1);
   const step = values.length > 1 ? width / (values.length - 1) : width;
   const pts = values.map((v, i) => {
     const x = i * step;

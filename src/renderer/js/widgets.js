@@ -165,7 +165,8 @@ export function initSystem() {
     }
     history.push(s.cpu);
     if (history.length > MAX) history.shift();
-    const { line, area } = polyline(history, 96, 44, 3);
+    // CPU 固定 0-100 量程，低负载时曲线贴近底部，不会被顶成一块色块
+    const { line, area } = polyline(history, 96, 44, 3, 100);
     if (line) {
       $('#sparkLine').setAttribute('d', line);
       $('#sparkArea').setAttribute('d', area);
@@ -232,7 +233,11 @@ export function initNetwork() {
     $('#netIp').textContent = n.ip || '无连接';
 
     // 吞吐走势
-    const { line, area } = polyline((n.downHistory || []).slice(-16), 104, 42, 4);
+    const raw = (n.downHistory || []).slice(-16);
+    // 采样点不足时用第一个真实值向左补齐，曲线从一条平线开始长
+    const series = raw.length ? Array(Math.max(0, 16 - raw.length)).fill(raw[0]).concat(raw) : [];
+    // 量程下限 32KB/s：网速很小时曲线不会贴着顶边
+    const { line, area } = polyline(series, 104, 42, 4, 32768);
     if (line) {
       $('#netLine').setAttribute('d', line);
       $('#netArea').setAttribute('d', area);

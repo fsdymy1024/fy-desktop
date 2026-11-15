@@ -35,8 +35,7 @@ class NetworkMonitor {
     this.speed = { down: 0, up: 0 };
     this.latency = null;
     this.latencyHistory = [];
-    // 先用 0 铺满，曲线从平线开始长；否则头两个采样点会画出一条突兀的对角线
-    this.speedHistory = new Array(HISTORY).fill(0);
+    this.speedHistory = [];
     this.wlan = null;
     this.wlanAt = 0;
     this.lastError = null;
@@ -164,6 +163,9 @@ class NetworkMonitor {
           this.speed.down = this.speed.down * (1 - a) + down * a;
           this.speed.up = this.speed.up * (1 - a) + up * a;
         }
+        // 只有算得出真实速率时才入历史，首帧的 0 不入库，避免曲线开头一段假 0
+        this.speedHistory.push(Math.round(this.speed.down));
+        if (this.speedHistory.length > HISTORY) this.speedHistory.shift();
       }
       if (counters) this.prev = { rx: counters.rx, tx: counters.tx, at: now };
 
@@ -173,8 +175,6 @@ class NetworkMonitor {
         if (this.latencyHistory.length > HISTORY) this.latencyHistory.shift();
       }
 
-      this.speedHistory.push(Math.round(this.speed.down));
-      if (this.speedHistory.length > HISTORY) this.speedHistory.shift();
 
       if (now - this.wlanAt > 12000) {
         this.wlanAt = now;
