@@ -305,6 +305,14 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     等 180ms 再抓。这个现象极容易被误判成「渲染挂了」。
 14. **多开写同一份 `config.json`** → 连点两次图标起两个实例，两组窗口叠在一起，谁写谁覆盖。
     命名互斥体 `Local\fy-desktop-single-instance` 保证单实例；`FY_SHOT` / `FY_SELFTEST` 下放行。
+15. **`alwaysOnBottom` 的窗口会被 Chromium 当成后台视图卸载** → 系统始终认为桌面层窗口被遮住，
+    Chromium 的遮挡计算把它归类为隐藏视图，触发后台节流，几分钟后卸载视图释放资源，恢复时重载整页。
+    肉眼是「组件闪一下再回来」，代价是指标历史、玻璃底图全部重来。修法是 `additionalBrowserArgs`：
+    `--disable-features=...,CalculateNativeWinOcclusion` + 三个 `--disable-*-backgrounding/throttling`。
+    注意 Tauri 默认会传 `msWebOOUI,msPdfOOUI,msSmartScreenProtection`，自己设置这个字段时要一并写回。
+    另外 `backgroundThrottling` 配置项在 Windows **不生效**（官方标注 Unsupported），别指望它。
+    定位手段：`[ui] ready` 打 `nav=导航类型` 与 `boots=会话内启动次数`，
+    `nav=reload` + `boots>1` 就是重载，`nav=navigate` + `boots=1` 才是真正的首帧。
 
 ## 10. 后续路线
 

@@ -14,6 +14,27 @@
 - 多屏支持
 - 图标白底抠除
 
+## [0.3.1] - 2026-11-15
+
+修一个「组件偶尔闪一下再回来」的问题。窗口本身不会再消失（0.3.0 已解耦），
+但页面会被 WebView2 整个重载一次，指标曲线、玻璃底图、`sessionStorage` 之外的状态
+全部重来。日志里同一次运行出现多条 `[ui] ready` 就是它。
+
+### 修复
+
+- **页面被 Chromium 当成后台视图卸载**：窗口是 `alwaysOnBottom`（常驻桌面层），
+  系统始终认为它被桌面壳遮住，Chromium 的遮挡计算于是把它归为「隐藏视图」，
+  触发后台节流，约几分钟后卸载视图释放资源，恢复时重载整页。
+  修法：加 `additionalBrowserArgs` 关掉 `CalculateNativeWinOcclusion` 与三个后台节流开关。
+  Tauri 默认会传的 `msWebOOUI,msPdfOOUI,msSmartScreenProtection` 一并写回，避免被覆盖掉。
+
+### 诊断
+
+- `[ui] ready` 日志加上 `#序号 / nav=导航类型 / boots=会话内启动次数`。
+  这次的根因就是靠 `nav=reload boots=2` 定性的：重载而非新进程，且会话还在。
+  顺带发现 `backgroundThrottling` 在 Windows 不生效（官方标注 Unsupported），
+  真正起作用的是浏览器启动参数。
+
 ## [0.3.0] - 2026-11-15
 
 这一版主要修一个把整块功能"修没了"的启动缺陷：**重启机器后桌面上看不到任何组件**。
@@ -141,7 +162,8 @@
 - 渲染层启用 `contextIsolation`、关闭 `nodeIntegration`，IPC 走白名单；天气请求只发生在主进程，渲染层无外网访问能力。
 - 整理操作只移动、不删除，且移动前必须通过确认弹层。
 
-[Unreleased]: https://github.com/your-name/fy-desktop/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/your-name/fy-desktop/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/your-name/fy-desktop/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/your-name/fy-desktop/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/your-name/fy-desktop/releases/tag/v0.2.0
 [0.1.0]: https://github.com/your-name/fy-desktop/releases/tag/v0.1.0
