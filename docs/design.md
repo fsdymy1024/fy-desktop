@@ -313,11 +313,25 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     另外 `backgroundThrottling` 配置项在 Windows **不生效**（官方标注 Unsupported），别指望它。
     定位手段：`[ui] ready` 打 `nav=导航类型` 与 `boots=会话内启动次数`，
     `nav=reload` + `boots>1` 就是重载，`nav=navigate` + `boots=1` 才是真正的首帧。
+16. **穿透窗口里的弹层「输入不进去」** → 窗口按热区穿透，弹层在屏幕中央、不在任何热区里，
+    鼠标一点就穿到桌面，焦点跟着跑掉；输入框还在，但键盘再也不认。
+    修法：弹层打开期间把 `force` 置真（整窗接管鼠标），关闭时还原；点遮罩不关闭，
+    而是 `preventDefault` + 把焦点还给输入框。这条对所有模态都适用，不是单个弹层的问题。
+17. **网卡枚举顺序 ≠ 路由顺序** → 「取第一个非回环 IPv4」在有 VMware / Hyper-V / WSL 的机器上
+    会命中虚拟网卡（本机就排在 `以太网` 前面的两块 `vEthernet`）。正确做法是让内核回答：
+    对 `223.5.5.5:80` 做一次 UDP `connect`（不发包），`local_addr()` 即出口地址，
+    再拿它去 `Networks` 里反查网卡名。兜底扫描时按名字跳过 `vEthernet/vmware/tun/tap` 等。
+18. **Open-Meteo 的地理编码不认中文** → `name=西湖区` 返回空，只有拼音/英文能命中，
+    做不到区县级。改用 photon（OSM）：`q=西湖区` 直接返回 `state/city/name` 三段，
+    正好拼成「浙江省 · 杭州市 · 西湖区」；注意它不支持 `lang=zh` 参数，传了会报错。
+19. **`mount()` 早于 `place()`** → 组件在挂载时读 `clientHeight` 拿到 0，如果按「量一次尺寸画一次」
+    的写法（模拟时钟表盘就是这样），尺寸会永远停在最小档，只有用户手动拉一下才恢复。
+    改成每次 `tick` 对一次尺寸、首帧再补一次 `requestAnimationFrame`。
 
 ## 10. 后续路线
 
 | 版本 | 内容 |
 | --- | --- |
-| v0.4.0 | 格子内拖拽排序、多屏支持、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测） |
-| v0.4.0 | 备忘录可编辑、自定义分组名与配色、模糊强度可调 |
+| v0.5.0 | 格子内拖拽排序、多屏支持、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测） |
+| v0.5.0 | 备忘录可编辑、模糊强度可调 |
 | v1.0.0 | 自动更新（`tauri-plugin-updater`）、代码签名 |
