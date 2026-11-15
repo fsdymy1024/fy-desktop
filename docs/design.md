@@ -478,11 +478,24 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     `.ps1` 必须存成 UTF-8 **带 BOM**；同理，给 `Get-Content` 读的 JSON 配置
     别写中文（或统一 `-Encoding UTF8`）。另外 5.1 不支持 `?.` 这类 7 语法，
     脚本要按 5.1 的语法写。
+32. **`explorer /n,<path>` 会把快捷方式当文件夹导航** → 这是 v0.8.1 修的严重
+    bug：点收纳格子里的 `.lnk`，有的正常启动程序，有的却跳到用户目录的「文档」。
+    看 `launch.log` 才发现分裂的根源——凡是日志里跟着 `new window shown` 的，
+    都是 explorer 把 `.lnk` 当成文件夹、开了一个资源管理器窗口导航过去（它解析
+    不了快捷方式目标就落到默认目录）；而那些回落到 `ShellExecute → 42` 的反而正常。
+    `/n` 的语义本来就是「以文件夹方式开新窗口」，根本不该用在快捷方式上。
+    修法：`open_path` **按类型分流**——`Path::new(path).is_dir()` 为真才用
+    `/n`（保留 v0.6 的隐藏窗口修复），快捷方式和普通文件直接 `ShellExecuteW`，
+    让 shell 按关联打开。**验证不能只看函数返回 Ok**——两种路径都返回成功，
+    必须看日志里有没有 `new window shown`：修复后点 `.lnk` 只应出现
+    `ShellExecute → 42`，不该再冒出新窗口。顺带解决了「explorer 开一次 +
+    fallback 再开一次」的重复启动。
+    （排查时的另一个小坑：Git Bash 会把环境变量里的 `C:\x` 自动转成 `C:/x`，
+    要用 `MSYS_NO_PATHCONV=1` 才能把原生反斜杠路径传给程序。）
 
 ## 10. 后续路线
 
 | 版本 | 内容 |
 | --- | --- |
-| v0.8.1 | 格子内拖拽排序、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测） |
-| v0.9.0 | 多屏支持、备忘录可编辑、模糊强度可调 |
+| v0.9.0 | 格子内拖拽排序、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测）、多屏支持、备忘录可编辑、模糊强度可调 |
 | v1.0.0 | 正式代码签名证书（替换自签）、GitHub 仓库与 release 流程跑通 |

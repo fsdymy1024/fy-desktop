@@ -54,14 +54,14 @@
 
 **装包（推荐）**
 
-下载 `fy-desktop_0.7.0_x64-setup.exe` 双击即可。装到当前用户目录，自动创建开始菜单与桌面快捷方式，
+下载 `fy-desktop_0.8.1_x64-setup.exe` 双击即可。装到当前用户目录，自动创建开始菜单与桌面快捷方式，
 
 首次启动会登记开机自启。
 
 静默安装 / 卸载：
 
 ```bat
-fy-desktop_0.7.0_x64-setup.exe /S
+fy-desktop_0.8.1_x64-setup.exe /S
 "%LOCALAPPDATA%\fy-desktop\uninstall.exe" /S
 ```
 
@@ -260,8 +260,9 @@ FY_SELFTEST=1 src-tauri/target/release/fy-desktop.exe
 
 | 版本 | 主题 |
 | --- | --- |
-| v0.8.0 | 格子内拖拽排序、多屏支持、图标白底抠除、备忘录可编辑 |
-| v1.0.0 | 自动更新、代码签名 |
+| v0.8.1 | 修复：点快捷方式误跳「文档」目录（`open_path` 按类型分流） |
+| v0.9.0 | 格子内拖拽排序、图标白底抠除、多屏支持、备忘录可编辑、模糊强度可调 |
+| v1.0.0 | 自动更新正式版、正式代码签名证书 |
 
 ## 许可
 

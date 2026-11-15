@@ -146,6 +146,16 @@ pub fn run() {
                 }
             }
 
+            // FY_OPEN_PATH=<路径>：启动后用真实的 open_path 打开任意条目。
+            // 用来验证「快捷方式不再跳到文档」——日志里应直接出现 ShellExecute，
+            // 且不会冒出 new window shown（那个是 explorer 把 .lnk 当文件夹导航的证据）。
+            if let Ok(p) = std::env::var("FY_OPEN_PATH") {
+                match desktop::open_path(&p) {
+                    Ok(()) => println!("[open] FY_OPEN_PATH 成功：{p}"),
+                    Err(e) => eprintln!("[open] FY_OPEN_PATH 失败：{e}"),
+                }
+            }
+
             // 开机自启以配置为准。安装版首启默认开，之后用户从托盘关掉就按配置关。
             // dev 下不碰，免得把 debug exe 写进注册表。
             if !cfg!(debug_assertions) {

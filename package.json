@@ -1,7 +1,7 @@
 {
   "name": "fy-desktop",
   "productName": "fy-desktop",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Windows 桌面玻璃小组件 + 桌面快捷方式收纳格子",
   "author": "fy",
   "license": "MIT",

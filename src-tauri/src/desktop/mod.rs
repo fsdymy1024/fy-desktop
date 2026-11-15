@@ -477,21 +477,30 @@ fn spawn_explorer(args: &[String]) -> Result<(), String> {
 
 /// 打开文件 / 文件夹 / 快捷方式。
 ///
-/// 顺序：先用 explorer 开新窗口并强制显示；不成再退回 ShellExecuteW。
+/// 必须按类型分流，不能一律塞给 `explorer /n`：
+/// - **文件夹**才用 `/n` 强制开新窗口并置前——机器上可能残留隐藏的资源管理器
+///   窗口，ShellExecute 会把导航送进那个看不见的窗口（v0.6 修的就是这个）。
+/// - **快捷方式 / 普通文件**直接交给 ShellExecute，让 shell 按关联打开。
+///   `/n` 的语义是「以文件夹方式开新窗口」，explorer 会把 `.lnk` 当成文件夹去
+///   导航，结果是弹出「文档」而不是启动目标程序——v0.8.1 修的就是这个严重 bug。
+///   而且这样也避免了「explorer 已启动一次 + fallback 又启动一次」的重复打开。
+///
 /// 返回 Err 时前端会弹 toast，别再让失败静默。
 #[cfg(windows)]
 pub fn open_path(path: &str) -> Result<(), String> {
-    // 路径里带逗号时 /n,<path> 会被切错，这种少见情况退回外壳
-    let open_args = if path.contains(',') {
-        vec![path.to_string()]
-    } else {
-        vec![format!("/n,{path}")]
-    };
-
-    let ret = spawn_explorer(&open_args);
-    log_launch(&format!("open {path} → {ret:?}"));
-    if ret.is_ok() {
-        return Ok(());
+    if std::path::Path::new(path).is_dir() {
+        // 路径里带逗号时 /n,<path> 会被切错，这种少见情况只给裸路径
+        let open_args = if path.contains(',') {
+            vec![path.to_string()]
+        } else {
+            vec![format!("/n,{path}")]
+        };
+        let ret = spawn_explorer(&open_args);
+        log_launch(&format!("open(folder) {path} → {ret:?}"));
+        if ret.is_ok() {
+            return Ok(());
+        }
+        // 文件夹这条也保留回落：开新窗口失败时至少能让资源管理器打开
     }
 
     use windows::core::{HSTRING, PCWSTR};
@@ -512,7 +521,7 @@ pub fn open_path(path: &str) -> Result<(), String> {
     }
     .0 as isize;
     // 返回值 > 32 才算成功；<= 32 是错误码（2 找不到文件、5 拒绝访问、31 无关联程序）
-    log_launch(&format!("  fallback ShellExecute → {code}"));
+    log_launch(&format!("  ShellExecute → {code}  {path}"));
     if code > 32 {
         return Ok(());
     }
