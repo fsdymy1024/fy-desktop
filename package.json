@@ -1,0 +1,21 @@
+{
+  "name": "fy-desktop",
+  "productName": "fy-desktop",
+  "version": "0.1.0",
+  "description": "Windows 桌面玻璃小组件 + 桌面快捷方式收纳格子",
+  "main": "src/main/main.js",
+  "author": "fy",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "shot": "node scripts/shot.mjs",
+    "icon": "node scripts/make-icon.mjs",
+    "check": "node --check src/main/main.js && node --check src/main/window.js && node --check src/main/services/network.js",
+    "smoke": "node scripts/run-electron.mjs scripts/smoke.js"
+  },
+  "devDependencies": {
+    "electron": "^45.3.2"
+  }
+}
