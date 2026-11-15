@@ -277,7 +277,7 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
 
 按发现顺序记录，都是真实卡住过的问题。
 
-1. **CSP 拦掉 `__TAURI__`** → 界面全空白，且窗口在 `ui_ready` 前隐藏，屏幕上什么都没有。现在失败会画到页面上。
+1. **CSP 拦掉 `__TAURI__`** → 界面全空白。现在失败会画到页面上，且窗口不再依赖前端才显示（见第 12 条）。
 2. **Tauri v2 权限缺失** → 8 条 `event.listen not allowed`，指标/天气全不更新，界面看着「正常」但数据是 `--`。
 3. **CSS 变量继承的是计算值** → 给 `.surface.on-dark` 改 `--ink` 后子元素仍是黑字，必须显式 `color: var(--ink)`。
 4. **`EnumWindows` 收起 0 个窗口** → `GetWindow(hwnd, GW_OWNER)` 无 owner 时返回 `Err`，原判断写反了；
@@ -292,11 +292,24 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
 11. **NSIS 工具链走 GitHub** → 打包时会从 `github.com/tauri-apps/binary-releases` 下载 NSIS 与
     `nsis_tauri_utils.dll`。网络受限时先确认 `%LOCALAPPDATA%\tauri\NSIS\makensis.exe` 存在，
     或从 `downloads.sourceforge.net` 取官方 NSIS 手动放进去。
+12. **`visible: false` 的窗口会被 Tauri 再藏一次（最坑的一个）** → 原设计是「等前端渲染完再显示，
+    避免白底闪一下」。实际 Tauri 在 WebView 初始化完成后会再应用一次初始窗口状态：`ui_ready` 刚
+    `ShowWindow` 出来，随即又被藏回去。时序取决于 WebView2 冷启动快慢，所以表现是**偶发**——
+    重启后桌面上什么都没有，但进程活着、内存正常、日志一片干净。
+    修法：`visible: true` + `setup` 里 `SW_SHOWNOACTIVATE`。`body` 本来就是 `transparent`，
+    提前显示不会闪白，「优化」本身就是伪需求。
+    推论：**窗口可见性不该依赖前端**。现在窗口与渲染层解耦，另加就绪看门狗把「前端多久没就绪」
+    打进日志，避免同类问题再次变成「什么都没发生」。
+13. **`WDA_EXCLUDEFROMCAPTURE` 恢复后要等一帧** → 截图前 `SetWindowDisplayAffinity(WDA_NONE)`
+    后立刻 `BitBlt`，DWM 还没合成新帧，抓到的是窗口仍然隐形的上一帧，截图上就是「一个组件都没有」。
+    等 180ms 再抓。这个现象极容易被误判成「渲染挂了」。
+14. **多开写同一份 `config.json`** → 连点两次图标起两个实例，两组窗口叠在一起，谁写谁覆盖。
+    命名互斥体 `Local\fy-desktop-single-instance` 保证单实例；`FY_SHOT` / `FY_SELFTEST` 下放行。
 
 ## 10. 后续路线
 
 | 版本 | 内容 |
 | --- | --- |
-| v0.3.0 | 格子内拖拽排序、多屏支持、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测） |
+| v0.4.0 | 格子内拖拽排序、多屏支持、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测） |
 | v0.4.0 | 备忘录可编辑、自定义分组名与配色、模糊强度可调 |
 | v1.0.0 | 自动更新（`tauri-plugin-updater`）、代码签名 |

@@ -14,6 +14,33 @@
 - 多屏支持
 - 图标白底抠除
 
+## [0.3.0] - 2026-11-15
+
+这一版主要修一个把整块功能"修没了"的启动缺陷：**重启机器后桌面上看不到任何组件**。
+窗口进程在跑、内存正常、日志也不报错，但用户面前就是一片空桌面。
+
+### 修复
+
+- **窗口被自己藏起来（严重）**：`tauri.conf.json` 里窗口是 `visible: false`，
+  设计意图是「等前端渲染完再显示，避免白底闪一下」。但 Tauri 会在 WebView 初始化完成后
+  再应用一次初始窗口状态，`ui_ready` 刚把窗口显示出来，紧接着又被隐藏回去。
+  时序取决于 WebView 冷启动快慢，所以表现为**偶发**：有时能看到组件，重启后就没有。
+  修法：窗口改为创建即显示（`visible: true` + `setup` 里 `SW_SHOWNOACTIVATE`）。
+  body 本来就是 `transparent`，提前显示不会闪白，放弃这个「优化」没有任何代价。
+- **窗口显示不再依赖前端**：原先只有前端调 `ui_ready` 才显示窗口，前端任何一处未捕获异常
+  都会让窗口永远不可见。现在窗口与前端解耦，并加了就绪看门狗：4.5 秒仍未就绪时把耗时打进
+  `stderr`，同时在 `index.html` 里放了一段 5 秒兜底，模块加载失败也能在屏幕上看到提示。
+- **截图上偶尔没有组件**：截图前取消 `WDA_EXCLUDEFROMCAPTURE` 后立刻 `BitBlt`，
+  DWM 还没合成新的一帧，抓到的是"窗口仍然隐形"的上一帧。改为等 180ms 再抓。
+- **多开互相踩**：连点两次图标会起两个实例，同时写同一份 `config.json`，还叠在同一块屏幕上。
+  改用命名互斥体（`Local\fy-desktop-single-instance`）保证单实例；`FY_SHOT` / `FY_SELFTEST`
+  模式下自动放行，不影响调试。
+
+### 新增
+
+- **时钟显示秒**：模拟时钟与数字时钟的时间文字都带上秒（小一号字号跟在分钟后）。
+  托盘菜单可随时开关，切换即时生效，不重建卡片。配置项 `show_seconds`，默认开。
+
 ## [0.2.0] - 2026-11-15
 
 技术栈整体重写：Electron → **Rust + Tauri v2**。内存从约 180 MB 降到 60 MB，
@@ -114,6 +141,7 @@
 - 渲染层启用 `contextIsolation`、关闭 `nodeIntegration`，IPC 走白名单；天气请求只发生在主进程，渲染层无外网访问能力。
 - 整理操作只移动、不删除，且移动前必须通过确认弹层。
 
-[Unreleased]: https://github.com/your-name/fy-desktop/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/your-name/fy-desktop/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/your-name/fy-desktop/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/your-name/fy-desktop/releases/tag/v0.2.0
 [0.1.0]: https://github.com/your-name/fy-desktop/releases/tag/v0.1.0
