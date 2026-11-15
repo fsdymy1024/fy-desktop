@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0.08" y1="0.04" x2="0.94" y2="1">
+      <stop offset="0" stop-color="#3f3832"/>
+      <stop offset="0.55" stop-color="#241f1b"/>
+      <stop offset="1" stop-color="#141110"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0.2" y2="1">
+      <stop offset="0" stop-color="#fff6ec" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#fff6ec" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0.2" x2="0" y2="0.9">
+      <stop offset="0" stop-color="#fffdfa"/>
+      <stop offset="1" stop-color="#ded6cb"/>
+    </linearGradient>
+    <clipPath id="round">
+      <rect x="30" y="30" width="964" height="964" rx="224" ry="224"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <rect x="30" y="30" width="964" height="964" fill="url(#bg)"/>
+    <rect x="30" y="30" width="964" height="520" fill="url(#gloss)"/>
+  </g>
+  <rect x="31.5" y="31.5" width="961" height="961" rx="223" ry="223" fill="none"
+        stroke="#fff8f0" stroke-opacity="0.2" stroke-width="3"/>
+
+  <!-- fy 的墨迹中心在 (535,375)，缩到画布的 78% 后移到正中心：
+       直接写字会顶到上下边缘，缩到 512 见方里留白才够。 -->
+  <g transform="translate(512,512) scale(0.78) translate(-535,-375)">
+    <text x="512" y="700" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
+          font-size="760" font-weight="700" fill="url(#ink)" letter-spacing="-14">fy</text>
+  </g>
+</svg>

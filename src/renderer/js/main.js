@@ -28,6 +28,14 @@ const S = {
 
 /* ============================ 启动 ============================ */
 
+// 截图模式下把未捕获异常记下来，随 dump 一起落盘
+window.addEventListener('error', (e) => {
+  S.err = `${e.message} @${e.filename}:${e.lineno}`;
+});
+window.addEventListener('unhandledrejection', (e) => {
+  S.err = `reject: ${e.reason?.message || e.reason}`;
+});
+
 async function boot() {
   const b = await invoke('boot');
   S.cfg = b.config;
@@ -78,9 +86,40 @@ async function boot() {
 
   // 调试：FY_UI=place|group 时自动打开对应弹层，方便截图核对样式与命中区
   if (b.uitest === 'place') setTimeout(() => pickPlace(), 400);
-  // FY_UI=edit：进编辑模式，用来核对档位按钮、参考线这些只在编辑态出现的东西
+  // FY_UI=edit：进编辑模式，用来核对虚线框、参考线这些只在编辑态出现的东西
   if (b.uitest === 'edit') setTimeout(() => setEdit(true), 400);
   if (b.uitest === 'group') setTimeout(() => promptInput('新建分组', '例如：设计素材'), 400);
+  // FY_UI=gal：打开组件库；FY_UI=menu：在首张卡片上弹右键菜单
+  // FY_UI=galadd / menusize：再点一下，用来验证「按档位添加」「右键换档」真的生效
+  if (b.uitest === 'gal') setTimeout(() => openGal(), 500);
+  if (b.uitest === 'galadd')
+    setTimeout(() => {
+      openGal();
+      setTimeout(
+        () => document.querySelector('#gallery .gcard[data-kind="weather"][data-size="s"]')?.click(),
+        700
+      );
+    }, 500);
+  if (b.uitest === 'menu') setTimeout(() => openFirstCardMenu(), 500);
+  if (b.uitest === 'menusize')
+    setTimeout(() => {
+      openFirstCardMenu();
+      setTimeout(() => document.querySelector('#menu button')?.click(), 600);
+    }, 500);
+}
+
+/** 调试用：在首张卡片上派发一次右键，等价于用户点右键 */
+function openFirstCardMenu() {
+  const el = document.querySelector('#stage .card');
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  el.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      bubbles: true,
+      clientX: Math.round(r.left + 46),
+      clientY: Math.round(r.top + 40)
+    })
+  );
 }
 
 function layoutStage() {
@@ -109,13 +148,14 @@ function normalizeSizes() {
     const list = sizesOf(w.kind);
     let size = w.size;
     if (!list.includes(size)) {
-      // 按旧宽高比例挑最接近的一档（方的是小、2:1 是中、4:3 是大）
-      const ratio = w.h > 0 ? w.w / w.h : 2;
-      size = list.reduce((best, k) => {
-        const [pw, ph] = dimsOf(k);
-        const [bw, bh] = dimsOf(best);
-        return Math.abs(pw / ph - ratio) < Math.abs(bw / bh - ratio) ? k : best;
-      }, list[0]);
+      // 这一档被砍掉了（v0.7 起除备忘额外取消「大」）：按档位距离就近归位。
+      // 不能按宽高比——240×180 的 ratio 是 1.33，反而更像「小」的 1:1。
+      const order = ['s', 'm', 'l'];
+      const at = Math.max(0, order.indexOf(size || 'm'));
+      size = list.reduce(
+        (best, k) => (Math.abs(order.indexOf(k) - at) < Math.abs(order.indexOf(best) - at) ? k : best),
+        list[0]
+      );
     }
     const [nw, nh] = dimsOf(size);
     if (w.size !== size || w.w !== nw || w.h !== nh) {
@@ -188,26 +228,9 @@ function buildCard(w) {
     body.innerHTML = `<div class="k">组件加载失败</div>`;
   }
 
-  // 尺寸只能从预设里选。以前是拖右下角把手（还能拉成任意宽高），
-  // 结果每个组件都是「差几个像素」的尺寸，怎么摆都对不齐。
-  const sizeBtns = sizesOf(w.kind)
-    .map((k) => {
-      const [sw, sh] = dimsOf(k);
-      return `<button class="sbtn${k === (w.size || 'm') ? ' on' : ''}" data-set-size="${k}"
-                title="${SIZE_LABEL[k]}：${sw}×${sh}">${SIZE_LABEL[k]}</button>`;
-    })
-    .join('');
-
-  el.insertAdjacentHTML(
-    'beforeend',
-    `<div class="wtool">
-       ${sizeBtns}
-       <button data-tool="remove" title="移除组件">
-         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>
-       </button>
-     </div>`
-  );
-
+  // 卡片上不再挂工具条：换尺寸、移除、调整布局全部收进右键菜单。
+  // 编辑态只留「拖动」这一件事，卡片本身保持干净——工具条会压住右上角的
+  // 内容（尤其是小号卡），而且三颗小按钮在桌面场景里太难点。
   return { el, inst };
 }
 
@@ -246,25 +269,58 @@ function renderWidgets() {
 function bindCard(el, w) {
   el.addEventListener('pointerdown', (e) => {
     if (!S.edit) return;
-    if (e.target.closest('.wtool')) return;
     if (e.button !== 0) return;
     startDrag(e, el, w);
   });
 
-  el.addEventListener('click', (e) => {
-    const size = e.target.closest('.wtool [data-set-size]')?.dataset.setSize;
-    if (size) return setCardSize(el, w, size);
-    const tool = e.target.closest('[data-tool]')?.dataset.tool;
-    if (tool === 'remove') return removeWidget(w.id);
+  // 右键卡片 = 这张卡的全部设置：尺寸、调整布局、添加、移除。
+  // 以前这些散在「编辑布局」和卡片右上角的小按钮里，先得进编辑态才找得到。
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openCardMenu(el, w, e.clientX, e.clientY);
   });
 
   // 双击天气卡直接改地区：这是最常用的设置，不该藏进托盘
   if (w.kind === 'weather') {
     el.addEventListener('dblclick', (e) => {
-      if (e.target.closest('.wtool')) return;
       pickPlace();
     });
   }
+}
+
+/** 组件右键菜单 */
+function openCardMenu(el, w, x, y) {
+  const def = REGISTRY[w.kind] || { name: w.kind };
+  const cur = w.size || 'm';
+  const items = [{ head: true, label: `${def.name} · ${SIZE_LABEL[cur]} ${dimsOf(cur).join('×')}` }];
+
+  for (const k of sizesOf(w.kind)) {
+    const [sw, sh] = dimsOf(k);
+    items.push({
+      label: `${k === cur ? '✓' : '　'} ${SIZE_LABEL[k]}　${sw}×${sh}`,
+      disabled: k === cur,
+      act: () => setCardSize(el, w, k)
+    });
+  }
+
+  items.push({ sep: true });
+  items.push({ label: '调整布局…', act: () => startLayout() });
+  items.push({ label: '添加组件…', act: () => openGal() });
+  items.push({ sep: true });
+  items.push({
+    label: '移除组件',
+    disabled: S.cfg.widgets.length <= 1,
+    act: () => removeWidget(w.id)
+  });
+
+  showMenu({ x, y }, items);
+}
+
+/** 进入布局编辑：卡片可拖动（吸网格 + 参考线），Esc 或「完成」退出 */
+function startLayout() {
+  setEdit(true);
+  toast('拖动卡片调整位置，Esc 结束');
 }
 
 /** 换档位：尺寸、位置、内容一起重排。
@@ -279,12 +335,12 @@ function setCardSize(el, w, size) {
   w.y = Math.round(clamp(w.y, 0, Math.max(0, S.design.h - nh)));
 
   place(el, w);
-  el.querySelectorAll('[data-set-size]').forEach((b) => b.classList.toggle('on', b.dataset.setSize === size));
   paintShotVars();
   S.mounted.get(w.id)?.inst?.onSizeChange?.();
   save();
   scheduleHit();
   scheduleTone();
+  toast(`「${REGISTRY[w.kind]?.name || w.kind}」已切到${SIZE_LABEL[size]}号`);
 }
 
 /* ---- 网格吸附 ----
@@ -362,7 +418,7 @@ function snapStart(pos, size, lines) {
 
 const onGrid = (v) => Math.round(v / GRID) * GRID;
 
-/** 拖动改位置。尺寸不在这里改——尺寸只有三档预设，由 .wtool 里的按钮切 */
+/** 拖动改位置。尺寸不在这里改——只有三档预设，从卡片右键菜单里选 */
 function startDrag(e, el, w) {
   e.preventDefault();
   e.stopPropagation();
@@ -404,24 +460,25 @@ function startDrag(e, el, w) {
   window.addEventListener('pointerup', onUp);
 }
 
-function addWidget(kind) {
+function addWidget(kind, size) {
   const def = REGISTRY[kind];
   if (!def) return;
-  const size = def.def || 'm';
-  const [w, h] = dimsOf(size);
+  // 组件库按档位分组列出，点的是「哪个组件的哪一档」，别一律按默认档加
+  const want = sizesOf(kind).includes(size) ? size : def.def || 'm';
+  const [w, h] = dimsOf(want);
   const spot = freeSpot(w, h);
   S.cfg.widgets.push({
     id: `${kind}-${Date.now().toString(36)}`,
     kind,
     x: spot.x,
     y: spot.y,
-    size,
+    size: want,
     w,
     h
   });
   renderWidgets();
   save();
-  toast(`已添加「${def.name}」`);
+  toast(`已添加「${def.name}」${SIZE_LABEL[want]}号`);
 }
 
 function removeWidget(id) {
@@ -802,7 +859,7 @@ function openGal() {
   if (S.gallery) return;
   S.gallery = openGallery($('#gallery'), {
     cfg: S.cfg,
-    onAdd: (kind) => addWidget(kind),
+    onAdd: (kind, size) => addWidget(kind, size),
     onClose: () => {
       S.gallery = null;
       updateHit();
@@ -1200,6 +1257,13 @@ function dumpLayout() {
         };
       })(),
       counters: S.counters || {},
+      // 弹层调试：菜单到底有没有渲染出来（FY_UI=menu 时靠这个判断）
+      menu: {
+        hidden: $('#menu')?.hidden,
+        items: $('#menu')?.querySelectorAll('button').length || 0,
+        text: $('#menu')?.innerText?.slice(0, 200) || ''
+      },
+      err: S.err || '',
       bridge: dbg,
       shot: !!S.shot
     },

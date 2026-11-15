@@ -1,7 +1,7 @@
 {
   "name": "fy-desktop",
   "productName": "fy-desktop",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Windows 桌面玻璃小组件 + 桌面快捷方式收纳格子",
   "author": "fy",
   "license": "MIT",
@@ -14,7 +14,7 @@
     "check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "check:version": "node scripts/check-version.mjs",
     "selftest": "cargo build --release --manifest-path src-tauri/Cargo.toml && node scripts/selftest.mjs",
-    "icon": "tauri icon assets/icon.png -o src-tauri/icons"
+    "icon": "tauri icon assets/icon.svg -o src-tauri/icons"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4"

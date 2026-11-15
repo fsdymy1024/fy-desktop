@@ -84,9 +84,10 @@ export const REGISTRY = {
     kind: 'weather',
     name: '天气',
     desc: '实时温度、天气状况与逐时预报',
-    sizes: ['s', 'm', 'l'],
+    sizes: ['s', 'm'],
     def: 'm',
-    preview: () => `<div class="mini"><b>17°</b>多云 · 最高 20°</div>`,
+    preview: (size) =>
+      size === 's' ? `<b>17°</b><span>多云</span>` : `<b>17°</b><span>多云 · 20°/15°</span>`,
     mount(body) {
       body.innerHTML = `
         <div class="wx-head"><span class="wx-city">天气</span><span class="wx-src"></span></div>
@@ -146,9 +147,10 @@ export const REGISTRY = {
     kind: 'clock',
     name: '模拟时钟',
     desc: '实时走针，附日期与本地时区',
-    sizes: ['s', 'm', 'l'],
+    sizes: ['s', 'm'],
     def: 'm',
-    preview: () => `<div class="mini"><b>16:21</b>模拟表盘</div>`,
+    preview: (size) =>
+      size === 's' ? `<b>16:21</b><span>11月15日</span>` : `<b>16:21</b><span>模拟表盘</span>`,
     mount(body) {
       body.innerHTML = `<div class="ck"><div class="ck-dial-slot"></div>
         <div class="ck-side">
@@ -214,9 +216,9 @@ export const REGISTRY = {
     kind: 'digital',
     name: '数字时钟',
     desc: '极简大字号时间',
-    sizes: ['s', 'm', 'l'],
+    sizes: ['s', 'm'],
     def: 's',
-    preview: () => `<div class="mini"><b>16:21</b>数字时间</div>`,
+    preview: () => `<b>16:21</b><span>11月15日</span>`,
     mount(body) {
       body.innerHTML = `<div class="dg"><div class="dg-time num"></div><div class="dg-date"></div></div>`;
       const t = body.querySelector('.dg-time');
@@ -237,9 +239,9 @@ export const REGISTRY = {
     kind: 'calendar',
     name: '日历',
     desc: '当月网格与今日高亮',
-    sizes: ['m', 'l'],
+    sizes: ['m'],
     def: 'm',
-    preview: () => `<div class="mini"><b>15</b>11月 · 周日</div>`,
+    preview: () => `<b>15</b><span>11月 · 周日</span>`,
     mount(body) {
       body.innerHTML = `<div class="cd">
           <div class="cd-today"><div class="cd-day num"></div><div class="cd-mw"></div></div>
@@ -288,9 +290,9 @@ export const REGISTRY = {
     kind: 'system',
     name: '系统监视',
     desc: 'CPU / 内存 / 磁盘与 CPU 走势',
-    sizes: ['s', 'm', 'l'],
+    sizes: ['s', 'm'],
     def: 'm',
-    preview: () => `<div class="mini"><b>12%</b>CPU · 内存 · 磁盘</div>`,
+    preview: () => `<b>12%</b><span>CPU · 内存 · 磁盘</span>`,
     mount(body) {
       body.innerHTML = `
         <div class="sys-rows">
@@ -354,9 +356,10 @@ export const REGISTRY = {
     kind: 'network',
     name: '网络',
     desc: '上下行速率、延迟、信号与 IP',
-    sizes: ['s', 'm', 'l'],
+    sizes: ['s', 'm'],
     def: 'm',
-    preview: () => `<div class="mini"><b>12.4</b>MB/s · 延迟 18ms</div>`,
+    preview: (size) =>
+      size === 's' ? `<b>12.4</b><span>MB/s</span>` : `<b>12.4</b><span>MB/s · 18ms</span>`,
     mount(body) {
       body.innerHTML = `
         <div class="net-top">
@@ -446,7 +449,7 @@ export const REGISTRY = {
     desc: '随手记两行，自动保存',
     sizes: ['m', 'l'],
     def: 'm',
-    preview: () => `<div class="mini"><b>…</b>随手记</div>`,
+    preview: () => `<b>…</b><span>随手记</span>`,
     mount(body, ctx) {
       body.innerHTML = `<div class="nt-head">备忘录</div>
         <textarea class="nt-area" placeholder="写点什么…" spellcheck="false"></textarea>`;

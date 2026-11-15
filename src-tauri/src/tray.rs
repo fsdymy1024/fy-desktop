@@ -5,8 +5,9 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
+    // 「编辑布局」不放在托盘里：它和「添加组件」挨在一起时看不出区别，
+    // 而且进编辑态之后还是得回到卡片上操作。现在一切都在卡片右键菜单里。
     let add = MenuItem::with_id(app, "add", "添加组件…", true, None::<&str>)?;
-    let edit = MenuItem::with_id(app, "edit", "编辑布局", true, None::<&str>)?;
     let glass = MenuItem::with_id(app, "glass", "刷新桌面底图", true, None::<&str>)?;
     let place = MenuItem::with_id(app, "place", "天气地区…", true, None::<&str>)?;
     let auto = CheckMenuItem::with_id(app, "autostart", "开机自启", true, false, None::<&str>)?;
@@ -19,7 +20,6 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         app,
         &[
             &add,
-            &edit,
             &glass,
             &place,
             &auto,
@@ -43,9 +43,6 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "add" => {
                 let _ = app.emit("tray:action", "gallery");
-            }
-            "edit" => {
-                let _ = app.emit("tray:action", "edit");
             }
             "glass" => {
                 let _ = app.emit("tray:action", "glass");

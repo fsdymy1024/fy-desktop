@@ -693,23 +693,6 @@ body[data-glass="1"] .surface::before {
    小号不是把内容整体缩小，而是「只留最要紧的」——字挤在一起比裁掉更难看。
    ========================================================================== */
 
-/* 编辑模式里工具条上的档位按钮 */
-.wtool .sbtn {
-  width: auto;
-  min-width: 17px;
-  height: 18px;
-  padding: 0 4px;
-  font-size: 9px;
-  line-height: 1;
-  color: rgba(26, 22, 19, 0.6);
-}
-
-.wtool .sbtn.on {
-  background: rgba(226, 98, 44, 0.16);
-  color: #c8501f;
-  font-weight: 700;
-}
-
 /* ---- 天气 ---- */
 /* 小：只留今天。城市 / 气温 / 天气 / 高低温，逐时预报整行收起 */
 .card[data-kind="weather"][data-size="s"] .wx-hours {
@@ -1236,43 +1219,8 @@ body[data-edit="1"] .panel:active {
   cursor: grabbing;
 }
 
-.wtool {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 5;
-  display: none;
-  gap: 3px;
-  padding: 2px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 6px 14px -8px rgba(40, 25, 15, 0.7);
-}
-
-body[data-edit="1"] .wtool {
-  display: flex;
-}
-
-.wtool button {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  display: grid;
-  place-items: center;
-  color: rgba(26, 22, 19, 0.66);
-}
-
-.wtool button:hover {
-  background: rgba(226, 98, 44, 0.14);
-  color: #c8501f;
-}
-
-.wtool svg {
-  width: 11px;
-  height: 11px;
-}
-
+/* 收纳面板右下角的缩放把手。卡片不再有把手（尺寸改成三档预设），
+   但面板的宽高仍是自由的，所以这段要留着。 */
 .grip {
   position: absolute;
   right: 2px;
@@ -1309,9 +1257,9 @@ body[data-edit="1"] .grip {
   gap: 7px;
   padding: 6px 8px;
   border-radius: 13px;
-  background: rgba(255, 252, 248, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 18px 34px -20px rgba(40, 25, 15, 0.7);
+  background: var(--pop-bg, rgba(255, 252, 248, 0.9));
+  border: 1px solid var(--pop-bd, rgba(255, 255, 255, 0.9));
+  box-shadow: 0 18px 34px -20px rgba(20, 12, 6, 0.7);
 }
 
 #editbar[hidden] {
@@ -1324,12 +1272,12 @@ body[data-edit="1"] .grip {
   border-radius: 8px;
   font-size: 10.5px;
   font-weight: 600;
-  color: rgba(26, 22, 19, 0.72);
-  background: rgba(120, 90, 70, 0.09);
+  color: var(--pop-ink, rgba(26, 22, 19, 0.72));
+  background: var(--pop-btn, rgba(120, 90, 70, 0.09));
 }
 
 .ebtn:hover {
-  background: rgba(120, 90, 70, 0.16);
+  background: var(--pop-btn-hover, rgba(120, 90, 70, 0.16));
 }
 
 .ebtn.primary {
@@ -1339,7 +1287,7 @@ body[data-edit="1"] .grip {
 
 .ehint {
   font-size: 9.5px;
-  color: rgba(26, 22, 19, 0.42);
+  color: var(--pop-ink3, rgba(26, 22, 19, 0.42));
   padding: 0 6px 0 2px;
 }
 
@@ -1353,31 +1301,80 @@ body[data-edit="1"] .grip {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(28, 20, 15, 0.32);
+  background: rgba(20, 15, 11, 0.4);
 }
 
 #gallery[hidden] {
   display: none;
 }
 
+/* 窗口配色由 data-mat 决定，三种材质各一套变量。
+   这样切材质时不用重建 DOM，整窗的底色、边框、预览、按钮一起跟着走。 */
 .gal {
-  width: 760px;
+  --gal-bg: rgba(255, 252, 248, 0.97);
+  --gal-ink: rgba(26, 22, 19, 0.9);
+  --gal-ink2: rgba(26, 22, 19, 0.46);
+  --gal-ink3: rgba(26, 22, 19, 0.3);
+  --gal-line: rgba(120, 90, 70, 0.12);
+  --gal-card: #ffffff;
+  --gal-hover: rgba(226, 98, 44, 0.07);
+  --prev-a: #fdf7ef;
+  --prev-b: #f2e6d6;
+  --prev-ink: rgba(26, 22, 19, 0.84);
+  --prev-sub: rgba(26, 22, 19, 0.42);
+
+  width: 762px;
   max-height: 84vh;
   border-radius: 22px;
-  background: rgba(255, 252, 248, 0.97);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 40px 80px -40px rgba(40, 25, 15, 0.85);
+  background: var(--gal-bg);
+  border: 1px solid var(--gal-line);
+  box-shadow: 0 40px 80px -40px rgba(20, 12, 6, 0.9);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  color: var(--gal-ink);
+}
+
+/* 暮色：深棕磨砂，和桌面上的卡片同一族色 */
+.gal[data-mat="dusk"] {
+  --gal-bg: rgba(35, 28, 24, 0.97);
+  --gal-ink: rgba(255, 249, 243, 0.94);
+  --gal-ink2: rgba(255, 249, 243, 0.55);
+  --gal-ink3: rgba(255, 249, 243, 0.34);
+  --gal-line: rgba(255, 255, 255, 0.1);
+  --gal-card: rgba(255, 255, 255, 0.055);
+  --gal-hover: rgba(255, 200, 160, 0.1);
+  --prev-a: #4a3b32;
+  --prev-b: #1d1714;
+  --prev-ink: rgba(255, 250, 244, 0.94);
+  --prev-sub: rgba(255, 250, 244, 0.5);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 40px 80px -36px rgba(0, 0, 0, 0.95);
+}
+
+/* 石墨：纯中性深灰，不带壁纸纹理 */
+.gal[data-mat="solid"] {
+  --gal-bg: rgba(39, 41, 44, 0.97);
+  --gal-ink: rgba(246, 244, 241, 0.94);
+  --gal-ink2: rgba(246, 244, 241, 0.52);
+  --gal-ink3: rgba(246, 244, 241, 0.32);
+  --gal-line: rgba(255, 255, 255, 0.09);
+  --gal-card: rgba(255, 255, 255, 0.05);
+  --gal-hover: rgba(255, 255, 255, 0.07);
+  --prev-a: #565a60;
+  --prev-b: #2b2d30;
+  --prev-ink: rgba(248, 246, 243, 0.94);
+  --prev-sub: rgba(248, 246, 243, 0.48);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 40px 80px -36px rgba(0, 0, 0, 0.95);
 }
 
 .gal-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 16px 18px 12px;
-  border-bottom: 1px solid rgba(120, 90, 70, 0.1);
+  padding: 16px 18px 13px;
+  border-bottom: 1px solid var(--gal-line);
 }
 
 .gal-head h2 {
@@ -1389,7 +1386,7 @@ body[data-edit="1"] .grip {
 .gal-head p {
   margin: 0;
   font-size: 10.5px;
-  color: rgba(26, 22, 19, 0.45);
+  color: var(--gal-ink2);
 }
 
 .gal-head .spacer {
@@ -1402,55 +1399,196 @@ body[data-edit="1"] .grip {
   border-radius: 8px;
   display: grid;
   place-items: center;
-  color: rgba(26, 22, 19, 0.5);
-  background: rgba(120, 90, 70, 0.08);
+  color: var(--gal-ink2);
+  background: var(--gal-card);
+  border: 1px solid var(--gal-line);
 }
 
 .gal-close:hover {
-  background: rgba(120, 90, 70, 0.16);
-  color: rgba(26, 22, 19, 0.8);
+  background: var(--gal-hover);
+  color: var(--gal-ink);
+}
+
+/* 材质切换：按钮本身就是一个色块，看到什么就切到什么 */
+.matseg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 6px;
+}
+
+.matseg-lab {
+  font-size: 9.5px;
+  color: var(--gal-ink3);
+  margin-right: 1px;
+}
+
+.matbtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  color: var(--gal-ink2);
+  background: var(--gal-card);
+  border: 1px solid var(--gal-line);
+}
+
+.matbtn i {
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.matbtn[data-mat="glass"] i {
+  background: linear-gradient(145deg, #fbf3e9 0%, #e3d3c0 55%, #cdbbaa 100%);
+}
+
+.matbtn[data-mat="dusk"] i {
+  background: linear-gradient(145deg, #4d3a2f 0%, #2a201b 60%, #15100e 100%);
+}
+
+.matbtn[data-mat="solid"] i {
+  background: linear-gradient(145deg, #5c6167 0%, #3a3d41 60%, #26282b 100%);
+}
+
+.matbtn:hover {
+  color: var(--gal-ink);
+}
+
+.matbtn[aria-pressed="true"] {
+  color: var(--gal-ink);
+  border-color: rgba(226, 98, 44, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(226, 98, 44, 0.28);
+}
+
+.gal-body {
+  overflow: auto;
+  padding: 4px 18px 16px;
+}
+
+/* 按档位分组：小 / 中 / 大 各一段 */
+.gsec {
+  padding-top: 12px;
+}
+
+.gsec + .gsec {
+  margin-top: 4px;
+  border-top: 1px dashed var(--gal-line);
+}
+
+.gsec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 2px 8px;
+}
+
+.gsec-head b {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.gsec-head span {
+  font-size: 9.5px;
+  color: var(--gal-ink3);
+  font-variant-numeric: tabular-nums;
+}
+
+.gsec-head em {
+  font-size: 9.5px;
+  font-style: normal;
+  color: var(--gal-ink2);
 }
 
 .gal-grid {
-  padding: 14px 18px 18px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  overflow: auto;
 }
 
 .gcard {
   border-radius: 14px;
-  border: 1px solid rgba(120, 90, 70, 0.12);
-  background: #fff;
+  border: 1px solid var(--gal-line);
+  background: var(--gal-card);
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s;
+  transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s, background 0.16s;
   cursor: pointer;
 }
 
 .gcard:hover {
   border-color: rgba(226, 98, 44, 0.45);
-  box-shadow: 0 12px 24px -18px rgba(40, 25, 15, 0.8);
+  box-shadow: 0 12px 24px -18px rgba(0, 0, 0, 0.8);
   transform: translateY(-1px);
 }
 
-.gcard.on {
-  cursor: default;
-  opacity: 0.55;
-}
-
+/* 预览：一张按档位比例画的迷你卡片，底色取自当前材质 */
 .gcard .gprev {
-  height: 74px;
+  height: 76px;
   border-radius: 10px;
-  background: linear-gradient(150deg, #fdf6ee, #f3e7d8);
-  border: 1px solid rgba(120, 90, 70, 0.08);
+  background: linear-gradient(150deg, var(--prev-a), var(--prev-b));
+  border: 1px solid var(--gal-line);
   display: grid;
   place-items: center;
   overflow: hidden;
-  position: relative;
+}
+
+.gcard .sk {
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 6px 14px -10px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  color: var(--prev-ink);
+  overflow: hidden;
+}
+
+.gcard .sk b {
+  font-size: 15px;
+  font-weight: 300;
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+
+.gcard .sk span {
+  font-size: 7.5px;
+  color: var(--prev-sub);
+  line-height: 1.2;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 迷你卡片按档位的真实比例：a×a / 2a×a / 2a×1.5a */
+.gsec[data-size="s"] .sk {
+  width: 46px;
+  height: 46px;
+}
+
+.gsec[data-size="m"] .sk {
+  width: 76px;
+  height: 38px;
+}
+
+.gsec[data-size="l"] .sk {
+  width: 78px;
+  height: 58px;
+}
+
+.gsec[data-size="s"] .sk b {
+  font-size: 13px;
 }
 
 .gcard .gname {
@@ -1459,11 +1597,12 @@ body[data-edit="1"] .grip {
   gap: 6px;
   font-size: 11.5px;
   font-weight: 650;
+  color: var(--gal-ink);
 }
 
 .gcard .gdesc {
   font-size: 9.5px;
-  color: rgba(26, 22, 19, 0.45);
+  color: var(--gal-ink2);
   line-height: 1.35;
   margin-top: -3px;
 }
@@ -1472,23 +1611,7 @@ body[data-edit="1"] .grip {
   margin-left: auto;
   font-size: 9.5px;
   font-weight: 600;
-  color: #1f63d6;
-}
-
-/* 组件库预览里的迷你示意 */
-.mini {
-  font-size: 9px;
-  color: rgba(26, 22, 19, 0.45);
-  text-align: center;
-  line-height: 1.4;
-}
-
-.mini b {
-  display: block;
-  font-size: 19px;
-  font-weight: 300;
-  color: rgba(26, 22, 19, 0.8);
-  letter-spacing: -0.6px;
+  color: #e2622c;
 }
 
 /* ==========================================================================
@@ -1500,9 +1623,9 @@ body[data-edit="1"] .grip {
   min-width: 148px;
   padding: 5px;
   border-radius: 11px;
-  background: rgba(255, 252, 248, 0.97);
-  border: 1px solid rgba(120, 90, 70, 0.12);
-  box-shadow: 0 22px 40px -22px rgba(40, 25, 15, 0.8);
+  background: var(--pop-bg, rgba(255, 252, 248, 0.97));
+  border: 1px solid var(--pop-bd, rgba(120, 90, 70, 0.12));
+  box-shadow: 0 22px 40px -22px rgba(20, 12, 6, 0.8);
 }
 
 #menu[hidden] {
@@ -1517,25 +1640,26 @@ body[data-edit="1"] .grip {
   padding: 6px 9px;
   border-radius: 7px;
   font-size: 11px;
-  color: rgba(26, 22, 19, 0.78);
+  color: var(--pop-ink, rgba(26, 22, 19, 0.78));
   text-align: left;
+  white-space: pre;
 }
 
 #menu button:hover {
-  background: rgba(226, 98, 44, 0.12);
-  color: #b8461a;
+  background: var(--pop-hover, rgba(226, 98, 44, 0.12));
+  color: var(--pop-ink-hl, #b8461a);
 }
 
 #menu .sep {
   height: 1px;
   margin: 4px 6px;
-  background: rgba(120, 90, 70, 0.1);
+  background: var(--pop-line, rgba(120, 90, 70, 0.1));
 }
 
 #menu .lab {
   padding: 4px 9px 2px;
   font-size: 9px;
-  color: rgba(26, 22, 19, 0.4);
+  color: var(--pop-ink3, rgba(26, 22, 19, 0.4));
 }
 
 #toast {
@@ -1570,6 +1694,19 @@ body[data-material="dusk"] {
   --fill-2: rgba(24, 18, 14, 0.76);
   --stroke: rgba(255, 255, 255, 0.14);
   --shadow: 0 22px 46px -26px rgba(0, 0, 0, 0.8), 0 3px 8px -4px rgba(0, 0, 0, 0.4);
+  /* 浮层（右键菜单 / 编辑条 / 弹层）跟着材质走：
+     深色材质下弹一块白板，比没有菜单还刺眼 */
+  --pop-bg: rgba(37, 30, 26, 0.985);
+  --pop-bd: rgba(255, 255, 255, 0.1);
+  --pop-ink: rgba(255, 249, 243, 0.92);
+  --pop-ink2: rgba(255, 249, 243, 0.58);
+  --pop-ink3: rgba(255, 249, 243, 0.38);
+  --pop-line: rgba(255, 255, 255, 0.1);
+  --pop-hover: rgba(255, 180, 140, 0.14);
+  --pop-ink-hl: #ffb894;
+  --pop-btn: rgba(255, 255, 255, 0.09);
+  --pop-btn-hover: rgba(255, 255, 255, 0.16);
+  --pop-field: rgba(255, 255, 255, 0.08);
 }
 
 body[data-material="dusk"] .surface::before {
@@ -1671,6 +1808,17 @@ body[data-material="solid"] {
   --fill-2: rgba(42, 39, 36, 0.9);
   --stroke: rgba(255, 255, 255, 0.1);
   --shadow: 0 20px 40px -28px rgba(0, 0, 0, 0.72), 0 3px 8px -5px rgba(0, 0, 0, 0.4);
+  --pop-bg: rgba(41, 43, 46, 0.985);
+  --pop-bd: rgba(255, 255, 255, 0.09);
+  --pop-ink: rgba(246, 244, 241, 0.92);
+  --pop-ink2: rgba(246, 244, 241, 0.55);
+  --pop-ink3: rgba(246, 244, 241, 0.34);
+  --pop-line: rgba(255, 255, 255, 0.09);
+  --pop-hover: rgba(255, 255, 255, 0.08);
+  --pop-ink-hl: #ffc9a6;
+  --pop-btn: rgba(255, 255, 255, 0.07);
+  --pop-btn-hover: rgba(255, 255, 255, 0.14);
+  --pop-field: rgba(255, 255, 255, 0.07);
   color: var(--ink);
 }
 
@@ -1783,10 +1931,10 @@ body[data-material="solid"] .cell.empty .ic {
   flex-direction: column;
   padding: 16px;
   border-radius: 16px;
-  background: rgba(255, 252, 248, 0.985);
-  border: 1px solid rgba(120, 90, 70, 0.12);
-  box-shadow: 0 34px 60px -30px rgba(40, 25, 15, 0.85);
-  color: rgba(26, 22, 19, 0.86);
+  background: var(--pop-bg, rgba(255, 252, 248, 0.985));
+  border: 1px solid var(--pop-bd, rgba(120, 90, 70, 0.12));
+  box-shadow: 0 34px 60px -30px rgba(20, 12, 6, 0.9);
+  color: var(--pop-ink, rgba(26, 22, 19, 0.86));
 }
 
 .modal-title {
@@ -1798,7 +1946,7 @@ body[data-material="solid"] .cell.empty .ic {
 .modal-hint {
   font-size: 10.5px;
   line-height: 1.6;
-  color: rgba(26, 22, 19, 0.5);
+  color: var(--pop-ink2, rgba(26, 22, 19, 0.5));
   margin-bottom: 8px;
 }
 
@@ -1813,8 +1961,8 @@ body[data-material="solid"] .cell.empty .ic {
   height: 32px;
   padding: 0 10px;
   border-radius: 9px;
-  border: 1px solid rgba(120, 90, 70, 0.22);
-  background: #fff;
+  border: 1px solid var(--pop-line, rgba(120, 90, 70, 0.22));
+  background: var(--pop-field, #fff);
   font: inherit;
   font-size: 12px;
   color: inherit;
@@ -1857,7 +2005,7 @@ body[data-material="solid"] .cell.empty .ic {
 }
 
 .place-item:hover {
-  background: rgba(226, 98, 44, 0.12);
+  background: var(--pop-hover, rgba(226, 98, 44, 0.12));
 }
 
 .place-item b {
