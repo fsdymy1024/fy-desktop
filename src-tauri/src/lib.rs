@@ -16,6 +16,13 @@ pub mod window;
 
 use state::AppState;
 use tauri::Manager;
+use std::sync::atomic::AtomicBool;
+use std::sync::OnceLock;
+
+/// 进程启动时刻。用来量「从进程起来到前端画完」到底花了多久。
+pub static BORN: OnceLock<std::time::Instant> = OnceLock::new();
+/// 前端有没有跑到 `ui_ready`。窗口显示已经不再依赖它，这个标志只用于诊断与兜底。
+pub static UI_READY: AtomicBool = AtomicBool::new(false);
 
 /// 各组件的默认尺寸（设计像素）。改这里等于改第一版默认布局。
 pub fn widget_size(kind: &str) -> (f64, f64) {
@@ -32,6 +39,17 @@ pub fn widget_size(kind: &str) -> (f64, f64) {
 }
 
 pub fn run() {
+    let _ = BORN.set(std::time::Instant::now());
+
+    // 截图/自检模式要能多开，否则调试时旧实例占着互斥体就永远跑不起来
+    let solo = std::env::var("FY_SHOT").is_err()
+        && std::env::var("FY_SELFTEST").is_err()
+        && std::env::var("FY_ALLOW_MULTI").is_err();
+    if solo && window::already_running() {
+        eprintln!("[window] 已有实例在运行，本次启动退出");
+        return;
+    }
+
     let builder = tauri::Builder::default();
 
     builder
@@ -68,6 +86,23 @@ pub fn run() {
 
             window::fill_screen(&win)?;
 
+            // 窗口一创建就显示出来。
+            // body 是 transparent 的，提前显示不会闪白；而「等前端就绪才显示」
+            // 的代价是前端任何一处异常都会让窗口永远不可见——用户看到的是
+            // 桌面上什么都没有，连「程序崩了」都判断不出来。
+            window::show_no_activate(commands::hwnd_of(&win));
+
+            // FY_TRACE=1：每 500ms 采样一次可见性，用来定位「窗口被谁藏起来了」
+            if std::env::var("FY_TRACE").is_ok() {
+                let hwnd = commands::hwnd_of(&win);
+                std::thread::spawn(move || {
+                    for i in 1..=10 {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        eprintln!("[trace] +{}ms visible={}", i * 500, window::is_visible(hwnd));
+                    }
+                });
+            }
+
             // 设计坐标系 = 窗口 CSS 尺寸 / 缩放。
             // 4K 屏上按 1920 设计稿直接画，字会小得像贴纸，所以先放大一档。
             let scale_factor = win.scale_factor().unwrap_or(1.0);
@@ -90,9 +125,12 @@ pub fn run() {
             // 默认穿透，光标压到卡片上才由守卫线程接管
             let _ = win.set_ignore_cursor_events(true);
 
-            // 让窗口对截图隐形，抓底图时就不会拍到自己
+            // 让窗口对截图隐形，抓底图时就不会拍到自己。
+            // FY_NO_EXCLUDE=1 用于排查：确认「肉眼看不到」是渲染问题还是截图排除。
             let hwnd = commands::hwnd_of(&win);
-            desktop::glass::exclude_from_capture(hwnd);
+            if std::env::var("FY_NO_EXCLUDE").is_err() {
+                desktop::glass::exclude_from_capture(hwnd);
+            }
 
             tray::create(app.handle())?;
 
@@ -108,6 +146,9 @@ pub fn run() {
             monitor::spawn(app.handle().clone());
             weather::spawn(app.handle().clone(), cfg.clone());
             window::spawn_hit_guard(app.handle().clone());
+
+            // 前端没在 4.5s 内就绪就强制显示窗口（配合渲染层的错误屏兜底）
+            window::spawn_show_watchdog(app.handle().clone(), 4500);
 
             if std::env::var("FY_SELFTEST").is_ok() {
                 spawn_selftest(app.handle().clone());

@@ -68,6 +68,9 @@ pub struct Config {
     pub glass: bool,
     #[serde(default = "d_true")]
     pub show_labels: bool,
+    /// 时钟要不要显示秒。模拟时钟的秒针不受此开关影响
+    #[serde(default = "d_true")]
+    pub show_seconds: bool,
 }
 
 fn d_material() -> String {
@@ -125,6 +128,7 @@ impl Config {
             autostart: true,
             glass: true,
             show_labels: true,
+            show_seconds: true,
         }
     }
 }

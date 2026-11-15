@@ -41,11 +41,18 @@ pub fn boot(state: State<'_, AppState>) -> Boot {
 /// 第一次渲染完成后才显示窗口，避免白底闪一下
 #[tauri::command]
 pub fn ui_ready(app: AppHandle) {
+    // 回归测试用：故意不显示，验证后端看门狗能把窗口捞回来
+    if std::env::var("FY_NO_UI_READY").is_ok() {
+        eprintln!("[ui] FY_NO_UI_READY：跳过显示");
+        return;
+    }
     if let Some(win) = app.get_webview_window("main") {
         let hwnd = hwnd_of(&win);
+        crate::UI_READY.store(true, std::sync::atomic::Ordering::SeqCst);
         crate::window::show_no_activate(hwnd);
+        let ms = crate::BORN.get().map(|t| t.elapsed().as_millis()).unwrap_or(0);
         eprintln!(
-            "[ui] ready hwnd={hwnd:#x} pos={:?} size={:?} visible={}",
+            "[ui] ready +{ms}ms hwnd={hwnd:#x} pos={:?} size={:?} visible={}",
             win.outer_position().ok(),
             win.inner_size().ok(),
             crate::window::is_visible(hwnd)

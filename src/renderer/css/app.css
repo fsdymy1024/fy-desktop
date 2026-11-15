@@ -285,6 +285,15 @@ body[data-glass="1"] .surface::before {
   line-height: 1.05;
 }
 
+/* 秒跟在时分后面、降一档字号，读数时不会跟分钟混淆 */
+.ck-time small {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--ink2);
+  margin-left: 2px;
+}
+
 .ck-date {
   font-size: 10.5px;
   color: var(--ink2);

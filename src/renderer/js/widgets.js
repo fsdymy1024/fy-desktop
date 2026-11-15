@@ -6,6 +6,17 @@
 
 import { esc, pad2, speed, spark, wxIcon, WEEK } from './util.js';
 
+/**
+ * 时钟是否显示秒。托盘菜单可切换，切换后下一次 tick 就生效——
+ * 不重建组件，避免卡片闪一下。
+ */
+let SHOW_SECONDS = true;
+export function setShowSeconds(on) {
+  SHOW_SECONDS = !!on;
+}
+/** 秒的部分，不显示时为空串 */
+const secSpan = (s) => (SHOW_SECONDS ? `<small>${pad2(s)}</small>` : '');
+
 const dialSize = (body) => Math.min(body.clientHeight, body.clientWidth * 0.52, 140);
 
 function dialSvg(size) {
@@ -138,7 +149,7 @@ export const REGISTRY = {
 
       const tick = () => {
         const d = new Date();
-        time.textContent = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+        time.innerHTML = `${pad2(d.getHours())}:${pad2(d.getMinutes())}${secSpan(d.getSeconds())}`;
         date.textContent = `${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]}`;
         if (!hands) build();
         if (!hands) return;
@@ -179,7 +190,7 @@ export const REGISTRY = {
       const d = body.querySelector('.dg-date');
       const tick = () => {
         const now = new Date();
-        t.innerHTML = `${pad2(now.getHours())}:${pad2(now.getMinutes())}<small>${pad2(now.getSeconds())}</small>`;
+        t.innerHTML = `${pad2(now.getHours())}:${pad2(now.getMinutes())}${secSpan(now.getSeconds())}`;
         d.textContent = `${now.getMonth() + 1}月${now.getDate()}日 周${WEEK[now.getDay()]}`;
       };
       tick();

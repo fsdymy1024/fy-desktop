@@ -155,6 +155,10 @@ pub fn snapshot(hwnd: isize, include_window: bool) -> Result<String, String> {
 pub fn raw_png(hwnd: isize, include_window: bool) -> Result<Vec<u8>, String> {
     if include_window {
         toggle_affinity(hwnd, false);
+        // DWM 要合成一帧之后窗口才会重新出现在截图里。
+        // 取消排除后立刻 BitBlt，抓到的还是「窗口仍然隐形」的上一帧，
+        // 表现就是偶尔截出来的图上一个组件都没有。
+        std::thread::sleep(std::time::Duration::from_millis(180));
     }
     let result = grab_screen(1, 0.0, true);
     if include_window {

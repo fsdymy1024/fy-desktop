@@ -9,6 +9,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let edit = MenuItem::with_id(app, "edit", "编辑布局", true, None::<&str>)?;
     let glass = MenuItem::with_id(app, "glass", "刷新桌面底图", true, None::<&str>)?;
     let auto = CheckMenuItem::with_id(app, "autostart", "开机自启", true, false, None::<&str>)?;
+    let secs = CheckMenuItem::with_id(app, "seconds", "时钟显示秒", true, true, None::<&str>)?;
     let root = MenuItem::with_id(app, "root", "打开收纳文件夹", true, None::<&str>)?;
     let conf = MenuItem::with_id(app, "conf", "设置文件…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 fy-desktop", true, None::<&str>)?;
@@ -20,6 +21,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &edit,
             &glass,
             &auto,
+            &secs,
             &PredefinedMenuItem::separator(app)?,
             &root,
             &conf,
@@ -29,6 +31,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     let auto_item = auto.clone();
+    let secs_item = secs.clone();
 
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().unwrap())
@@ -58,6 +61,17 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 }
                 let _ = app.emit("autostart:changed", after);
             }
+            "seconds" => {
+                let mut after = true;
+                if let Some(state) = app.try_state::<crate::state::AppState>() {
+                    after = state.with_config(|c| {
+                        c.show_seconds = !c.show_seconds;
+                        c.show_seconds
+                    });
+                }
+                let _ = secs_item.set_checked(after);
+                let _ = app.emit("clock:seconds", after);
+            }
             "root" => {
                 if let Some(state) = app.try_state::<crate::state::AppState>() {
                     let root = crate::desktop::root_dir(&state.config());
@@ -73,6 +87,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 
     // 托盘勾选状态以系统注册表为准，别只看配置
     let _ = auto.set_checked(crate::autostart::is_enabled());
+    if let Some(state) = app.try_state::<crate::state::AppState>() {
+        let _ = secs.set_checked(state.config().show_seconds);
+    }
 
     Ok(())
 }

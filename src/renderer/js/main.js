@@ -6,7 +6,7 @@
  */
 
 import { invoke, listen, dbg } from './bridge.js';
-import { REGISTRY } from './widgets.js';
+import { REGISTRY, setShowSeconds } from './widgets.js';
 import { renderOrganizer, groupAtPoint, resetLoose } from './organizer.js';
 import { openGallery } from './gallery.js';
 import { clamp } from './util.js';
@@ -37,13 +37,22 @@ async function boot() {
 
   layoutStage();
   applyMaterial();
+  setShowSeconds(S.cfg.show_seconds !== false);
 
   renderWidgets();
-  await refreshDesktop();
-  bindGlobalEvents();
-  if (!S.shotMode) loadGlass();
 
+  // 窗口显示必须早于任何耗时/易失败的 IO。
+  // 之前 refreshDesktop（扫桌面 + 提图标）排在前面，开机自启时这一步最慢，
+  // 一旦抛异常窗口就永远保持隐藏——用户看到的是「桌面上什么都没有」，
+  // 而且没有任何提示能说明是渲染层没起来。
   invoke('ui_ready');
+  document.body.dataset.ready = '1';
+
+  bindGlobalEvents();
+
+  // 桌面内容与玻璃底图都不阻断主流程：两者失败，组件照样可用。
+  refreshDesktop().catch((e) => console.warn('[desk] 首屏加载失败', e));
+  if (!S.shotMode) loadGlass();
 
   if (S.shotMode) {
     // 等玻璃底图就绪再落盘，否则 json 里 glass 永远是 false
@@ -720,6 +729,13 @@ function bindGlobalEvents() {
       toneImage = null;
       loadGlass();
     }
+  });
+
+  // 托盘切换「时钟显示秒」：改全局开关后手动 tick 一次，不必重建卡片
+  listen('clock:seconds', (on) => {
+    S.cfg.show_seconds = !!on;
+    setShowSeconds(S.cfg.show_seconds);
+    for (const inst of S.mounted.values()) inst?.tick?.();
   });
 
   // 从资源管理器拖文件进来：按落点判断要收进哪个格子
