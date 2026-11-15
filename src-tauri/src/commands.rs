@@ -38,9 +38,14 @@ pub fn boot(state: State<'_, AppState>) -> Boot {
     }
 }
 
+/// 渲染层就绪次数。进程内累加，用来区分「就绪一次」和「页面被重建了 N 次」。
+/// WebView2 在渲染进程被回收后会自动重新加载页面，前端看不出原因，
+/// 只有把计数和导航类型打出来才能判断是重载还是崩溃恢复。
+static READY_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// 第一次渲染完成后才显示窗口，避免白底闪一下
 #[tauri::command]
-pub fn ui_ready(app: AppHandle) {
+pub fn ui_ready(app: AppHandle, nav: Option<String>, boots: Option<u32>) {
     // 回归测试用：故意不显示，验证后端看门狗能把窗口捞回来
     if std::env::var("FY_NO_UI_READY").is_ok() {
         eprintln!("[ui] FY_NO_UI_READY：跳过显示");
@@ -51,8 +56,11 @@ pub fn ui_ready(app: AppHandle) {
         crate::UI_READY.store(true, std::sync::atomic::Ordering::SeqCst);
         crate::window::show_no_activate(hwnd);
         let ms = crate::BORN.get().map(|t| t.elapsed().as_millis()).unwrap_or(0);
+        let n = READY_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         eprintln!(
-            "[ui] ready +{ms}ms hwnd={hwnd:#x} pos={:?} size={:?} visible={}",
+            "[ui] ready #{n} +{ms}ms nav={} boots={} hwnd={hwnd:#x} pos={:?} size={:?} visible={}",
+            nav.as_deref().unwrap_or("?"),
+            boots.map(|b| b.to_string()).unwrap_or_else(|| "?".into()),
             win.outer_position().ok(),
             win.inner_size().ok(),
             crate::window::is_visible(hwnd)

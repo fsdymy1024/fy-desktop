@@ -45,7 +45,18 @@ async function boot() {
   // 之前 refreshDesktop（扫桌面 + 提图标）排在前面，开机自启时这一步最慢，
   // 一旦抛异常窗口就永远保持隐藏——用户看到的是「桌面上什么都没有」，
   // 而且没有任何提示能说明是渲染层没起来。
-  invoke('ui_ready');
+  // 诊断：区分「正常首帧」与「页面被重建」。
+  // sessionStorage 在重载后仍然存在，计数 > 1 就说明浏览器把页面从头跑了一遍。
+  let boots = 1;
+  try {
+    boots = (Number(sessionStorage.getItem('fy:boots')) || 0) + 1;
+    sessionStorage.setItem('fy:boots', String(boots));
+  } catch {
+    // 存储不可用时不影响启动，只是拿不到计数
+  }
+  const navEntry = performance.getEntriesByType('navigation')[0];
+  invoke('ui_ready', { nav: navEntry ? navEntry.type : '?', boots });
+
   document.body.dataset.ready = '1';
 
   bindGlobalEvents();
