@@ -10,6 +10,7 @@
  */
 
 import { REGISTRY, ORDER, SIZE_LABEL, dimsOf } from './widgets.js';
+import { makeDraggable } from './floatwin.js';
 
 const MATERIALS = [
   ['glass', '玻璃'],
@@ -65,7 +66,7 @@ export function openGallery(host, opts) {
       <div class="gal-head">
         <div>
           <h2>添加组件</h2>
-          <p>点一下按这一档加到桌面；右键卡片可换尺寸、调整布局、移除</p>
+          <p>点一下按这一档加到桌面；右键卡片可换尺寸、材质、调整布局、移除 · 拖标题栏可移动</p>
         </div>
         <span class="spacer"></span>
         <div class="matseg">
@@ -81,7 +82,25 @@ export function openGallery(host, opts) {
 
   host.hidden = false;
 
+  /** 材质状态只在这里改，保证「点按钮」和「外部全局同步」走同一条路。
+   *  external 由 main.js 的 setGlobalMaterial 调用，避免两边各记一份 mat。 */
+  const setMaterial = (next) => {
+    if (!MATERIALS.some(([k]) => k === next)) return;
+    mat = next;
+    host.querySelector('.gal')?.setAttribute('data-mat', mat);
+    host.querySelectorAll('.matbtn').forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.mat === mat));
+    });
+  };
+
+  const disposeDrag = makeDraggable(
+    host.querySelector('.gal'),
+    host.querySelector('.gal-head'),
+    'gallery'
+  );
+
   const close = () => {
+    disposeDrag();
     host.hidden = true;
     host.innerHTML = '';
     document.removeEventListener('keydown', onKey);
@@ -93,28 +112,23 @@ export function openGallery(host, opts) {
   document.addEventListener('keydown', onKey);
 
   host.onclick = (e) => {
-    if (e.target === host) return close();
+    // 点遮罩不关闭：这几个窗口只有 x / Esc 才关，点别处不会凭空消失
+    if (e.target === host) return;
     if (e.target.closest('.gal-close')) return close();
 
     // 只认材质按钮：`.gal` 自己也带 data-mat（给 CSS 用），
     // 用 [data-mat] 会把「点卡片」误判成「点材质」，添加永远不生效。
     const matBtn = e.target.closest('.matbtn');
     if (matBtn) {
-      mat = matBtn.dataset.mat;
-      // 面板底色、预览、按钮选中态都靠这一个属性传达
-      host.querySelector('.gal')?.setAttribute('data-mat', mat);
-      host.querySelectorAll('.matbtn').forEach((b) => {
-        b.setAttribute('aria-pressed', String(b.dataset.mat === mat));
-      });
+      setMaterial(matBtn.dataset.mat);
+      // 全局统一应用：桌面所有组件、这个窗口、关于页、天气地区页一起变
       onChange?.({ material: mat });
       return;
     }
 
     const card = e.target.closest('.gcard');
-    // 把当前选中的材质一起交给添加逻辑：新卡记住这个材质，不回头改全局里
-    // 已经存在的卡片（v0.9 修正「选材质却改了所有卡」的反向联动）。
     if (card) onAdd?.(card.dataset.kind, card.dataset.size, mat);
   };
 
-  return { close };
+  return { close, setMaterial };
 }

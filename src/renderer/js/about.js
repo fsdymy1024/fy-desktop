@@ -7,6 +7,7 @@
  */
 
 import { invoke } from './bridge.js';
+import { makeDraggable } from './floatwin.js';
 
 const REPO = 'https://github.com/fsdymy1024/fy-desktop';
 
@@ -69,12 +70,19 @@ export function openAbout(host, opts) {
 
   host.hidden = false;
 
+  const disposeDrag = makeDraggable(
+    host.querySelector('.ab'),
+    host.querySelector('.ab-head'),
+    'about'
+  );
+
   const slot = host.querySelector('[data-slot="upd"]');
   const checkBtn = host.querySelector('[data-act="check"]');
   const autoBox = host.querySelector('[data-act="auto"]');
   let found = null;
 
   const close = () => {
+    disposeDrag();
     host.hidden = true;
     host.innerHTML = '';
     document.removeEventListener('keydown', onKey);
@@ -151,7 +159,8 @@ export function openAbout(host, opts) {
   }
 
   host.onclick = (e) => {
-    if (e.target === host) return close();
+    // 点遮罩不关闭：只有 x / Esc 才关
+    if (e.target === host) return;
     if (e.target.closest('.ab-close')) return close();
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'check') return check();

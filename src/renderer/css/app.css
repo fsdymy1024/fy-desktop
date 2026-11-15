@@ -1977,9 +1977,35 @@ body[data-material="solid"] .cell.empty .ic {
 }
 
 .modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12.5px;
   font-weight: 650;
   margin-bottom: 10px;
+  cursor: move;
+}
+
+.modal-title > span {
+  flex: 1;
+}
+
+.modal-x {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--pop-ink2, rgba(26, 22, 19, 0.5));
+  background: var(--pop-btn, rgba(120, 90, 70, 0.09));
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.modal-x:hover {
+  color: var(--pop-ink, rgba(26, 22, 19, 0.9));
+  background: var(--pop-btn-hover, rgba(120, 90, 70, 0.16));
 }
 
 .modal-hint {
@@ -2372,4 +2398,32 @@ body[data-material="solid"] .cell.empty .ic {
   font-size: 9.8px;
   color: var(--pop-ink3, rgba(26, 22, 19, 0.36));
   border-top: 1px solid var(--pop-line, rgba(120, 90, 70, 0.1));
+}
+
+/* ==========================================================================
+   浮层窗口：可拖动 / 点外部不关闭 / 只有 x 才关
+   拖动由 floatwin.js 用 translate 偏移实现（面板仍由容器居中），
+   这里只负责把标题栏标成可拖，并让标题栏里的按钮保持自己的手型。
+   ========================================================================== */
+
+.gal-head,
+.ab-head {
+  cursor: move;
+}
+
+/* 继承来的 move 会盖住按钮自身的点击语义，显式还回去 */
+.gal-head button,
+.gal-head a,
+.gal-head input,
+.ab-head button,
+.ab-head a,
+.modal-title button {
+  cursor: pointer;
+}
+
+/* 拖的时候别把标题文字选中成一片蓝 */
+.gal-head,
+.ab-head,
+.modal-title {
+  user-select: none;
 }

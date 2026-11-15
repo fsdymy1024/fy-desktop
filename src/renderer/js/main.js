@@ -10,6 +10,7 @@ import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf } from './widgets.js';
 import { renderOrganizer, groupAtPoint, resetLoose } from './organizer.js';
 import { openGallery } from './gallery.js';
 import { openAbout, updateHint } from './about.js';
+import { makeDraggable } from './floatwin.js';
 import { clamp } from './util.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -88,6 +89,17 @@ async function boot() {
     });
   }
 
+  // 调试：自动化验证会把窗口拖到奇怪的位置并存进 localStorage，
+  // 跑一次 resetpos 清掉，免得正式使用时窗口默认不在正中。
+  if (b.uitest === 'resetpos') {
+    ['gallery', 'about', 'modal'].forEach((k) => {
+      try {
+        localStorage.removeItem(`fy.float.${k}`);
+      } catch (_) {
+        // localStorage 被禁就算了
+      }
+    });
+  }
   // 调试：FY_UI=place|group 时自动打开对应弹层，方便截图核对样式与命中区
   if (b.uitest === 'place') setTimeout(() => pickPlace(), 400);
   // FY_UI=edit：进编辑模式，用来核对虚线框、参考线这些只在编辑态出现的东西
@@ -113,21 +125,41 @@ async function boot() {
         800
       );
     }, 500);
-  // FY_UI=about：打开关于面板（截图核对面板本身，以及没有仓库时的报错文案）
-  // FY_UI=cardmats：验证组件级材质——先选暮色加一张系统卡，再选玻璃加一张天气卡，
-  // 同屏两张不同材质的卡，截图可直接对比配色是否各自独立。
-  if (b.uitest === 'cardmats')
+  // FY_UI=matall：验证「改材质 = 所有元素一起变」。切暮色后关掉组件库、
+  // 打开关于页，dump 里可同时看到 body / 全部卡片 / 组件库 / 关于页的材质与底色。
+  // cardmats 是 v0.9 用的旧名，保留兼容。
+  if (b.uitest === 'matall' || b.uitest === 'cardmats')
     setTimeout(() => {
       openGal();
       setTimeout(() => {
         document.querySelector('#gallery .matbtn[data-mat="dusk"]')?.click();
-        document.querySelector('#gallery .gcard[data-kind="system"][data-size="m"]')?.click();
+        setTimeout(() => {
+          S.gallery?.close();
+          openAboutPanel();
+        }, 900);
       }, 700);
+    }, 500);
+  // FY_UI=floatwin：验证浮层「点外部不关 / 可拖动 / 只有 x 才关」。
+  // 三步结果写进 S.floatProbe，dump 里读；最后重新打开窗口便于截图核对。
+  if (b.uitest === 'floatwin')
+    setTimeout(() => {
+      openAboutPanel();
       setTimeout(() => {
-        document.querySelector('#gallery .matbtn[data-mat="glass"]')?.click();
-        document.querySelector('#gallery .gcard[data-kind="weather"][data-size="s"]')?.click();
-        S.gallery?.close();
-      }, 1500);
+        const host = $('#about');
+        const M = (t, o) => new MouseEvent(t, { bubbles: true, button: 0, ...o });
+        host.dispatchEvent(M('click', {}));
+        const stayed = !host.hidden;
+        const head = host.querySelector('.ab-head');
+        head.dispatchEvent(M('mousedown', { clientX: 200, clientY: 200 }));
+        document.dispatchEvent(M('mousemove', { clientX: 300, clientY: 260 }));
+        document.dispatchEvent(M('mouseup', {}));
+        const moved = host.querySelector('.ab')?.style.transform || '';
+        host.querySelector('.ab-close')?.click();
+        const closedByX = host.hidden;
+        openAboutPanel();
+        S.floatProbe = { stayedAfterBackdrop: stayed, moved, closedByX };
+        setTimeout(() => dumpLayout(), 250);
+      }, 700);
     }, 500);
   if (b.uitest === 'about') setTimeout(() => openAboutPanel(), 500);
   // FY_UI=aboutcheck：打开关于并点一次「检查更新」，验证 GitHub 那条链路
@@ -170,6 +202,33 @@ function layoutStage() {
 function applyMaterial() {
   document.body.dataset.material = S.cfg.material || 'glass';
   document.body.dataset.labels = S.cfg.show_labels === false ? '0' : '1';
+}
+
+/** 卡片的 data-material 是渲染时写死的，只改 body 不会动它。
+ *  改全局材质时必须逐张刷新，不然「所有元素一起变」就漏掉了桌面组件。 */
+function syncCardMaterials() {
+  const byId = new Map((S.cfg.widgets || []).map((w) => [w.id, w]));
+  document.querySelectorAll('#stage .card').forEach((el) => {
+    const w = byId.get(el.dataset.id);
+    el.dataset.material = w?.material || S.cfg.material || 'glass';
+  });
+}
+
+/** 用户改材质 = 全局统一应用。
+ *  四类一起走：桌面所有组件、组件库窗口、关于页、天气地区弹窗。
+ *  浮层靠 body[data-material] 的 --pop-* 变量自动跟随；组件库自己另有一套
+ *  --gal-*（按 .gal[data-mat]），要显式同步选中态；卡片靠 syncCardMaterials。
+ *  单卡右键换的材质被这次全局操作覆盖掉，这是「所有元素一起改」的语义；
+ *  之后仍可右键某张卡再单独换。 */
+function setGlobalMaterial(mat) {
+  if (!['glass', 'dusk', 'solid'].includes(mat)) return;
+  S.cfg.material = mat;
+  for (const w of S.cfg.widgets || []) w.material = '';
+  applyMaterial();
+  syncCardMaterials();
+  S.gallery?.setMaterial?.(mat);
+  save();
+  loadGlass();
 }
 
 /* ============================ 组件 ============================ */
@@ -533,8 +592,9 @@ function addWidget(kind, size, material) {
     size: want,
     w,
     h,
-    // 组件库里选的材质只写给「这一张新卡」，不改全局——这是 v0.9 修正的联动方向。
-    // 空串表示跟随全局，老配置 / 托盘添加都走这条。
+    // 点材质按钮时 setGlobalMaterial 已经把全局统一应用过了，这里带上同一个值；
+    // 下次再改全局会被统一清空。真正算「单卡覆盖」的只有右键换材质。
+    // 空串＝跟随全局，老配置 / 托盘添加都走这条。
     material: material || ''
   });
   renderWidgets();
@@ -940,15 +1000,7 @@ function openGal() {
       S.gallery = null;
       updateHit();
     },
-    onChange: (patch) => {
-      Object.assign(S.cfg, patch);
-      applyMaterial();
-      save();
-      // 全局材质变了要重判要不要抓屏（收纳面板/弹层跟随全局）；
-      // needsShot 会把「卡片各自材质」也算进去，不会因为全局是石墨
-      // 就把桌面上那张玻璃卡的白膜撤掉。
-      loadGlass();
-    }
+    onChange: (patch) => setGlobalMaterial(patch.material),
   });
   updateHit();
 }
@@ -1031,7 +1083,12 @@ function modal(title, bodyHtml, opts = {}) {
     wrap.className = 'modal';
     wrap.innerHTML = `
       <div class="modal-card">
-        <div class="modal-title">${escapeHtml(title)}</div>
+        <div class="modal-title">
+          <span>${escapeHtml(title)}</span>
+          <button class="modal-x" data-x title="关闭 (Esc)" aria-label="关闭">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>
+          </button>
+        </div>
         ${bodyHtml}
         <div class="modal-foot">
           <button class="ebtn" data-close>${escapeHtml(opts.cancelText || '取消')}</button>
@@ -1040,7 +1097,14 @@ function modal(title, bodyHtml, opts = {}) {
       </div>`;
     document.body.appendChild(wrap);
 
+    const disposeDrag = makeDraggable(
+      wrap.querySelector('.modal-card'),
+      wrap.querySelector('.modal-title'),
+      'modal'
+    );
+
     const close = (v) => {
+      disposeDrag();
       wrap.remove();
       S.force = wasForce;
       updateHit();
@@ -1055,6 +1119,7 @@ function modal(title, bodyHtml, opts = {}) {
       }
     });
     wrap.querySelector('[data-close]').onclick = () => close(null);
+    wrap.querySelector('[data-x]').onclick = () => close(null);
     wrap.querySelector('[data-ok]')?.addEventListener('click', () => close(opts.onOk?.(wrap) ?? null));
     wrap.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') close(null);
@@ -1376,6 +1441,27 @@ function dumpLayout() {
         items: $('#menu')?.querySelectorAll('button').length || 0,
         text: $('#menu')?.innerText?.slice(0, 200) || ''
       },
+      // 浮层调试：窗口是否还在、拖到哪了、配色是否跟着全局材质
+      floats: {
+        body: document.body.dataset.material,
+        gallery: {
+          hidden: $('#gallery')?.hidden,
+          mat: $('#gallery .gal')?.dataset.mat || '',
+          transform: $('#gallery .gal')?.style.transform || '',
+          bg: $('#gallery .gal') ? getComputedStyle($('#gallery .gal')).backgroundColor : ''
+        },
+        about: {
+          hidden: $('#about')?.hidden,
+          transform: $('#about .ab')?.style.transform || '',
+          bg: $('#about .ab') ? getComputedStyle($('#about .ab')).backgroundColor : ''
+        },
+        modal: {
+          count: document.querySelectorAll('.modal').length,
+          transform: document.querySelector('.modal-card')?.style.transform || '',
+          bg: document.querySelector('.modal-card') ? getComputedStyle(document.querySelector('.modal-card')).backgroundColor : ''
+        }
+      },
+      probe: { float: S.floatProbe || null, mat: S.matProbe || null },
       err: S.err || '',
       bridge: dbg,
       shot: !!S.shot

@@ -186,7 +186,7 @@ v0.6 只能按默认档加，想用小号得先加再改。
 组件库、右键菜单、编辑条、弹层的配色都挂在同一个 `--pop-*` / `--gal-*` 变量组上，
 由 `body[data-material]` 赋值。深色材质下不会弹出一块白板：
 亮色浮层贴在深色卡片旁边，比没有浮层还刺眼。
-**注意浮层跟的是全局材质，卡片跟的是自己的材质**（v0.9.0 起，见 4.3.4）。
+**浮层跟全局材质；卡片默认也跟全局，只有右键单卡换过材质才例外**（见 4.3.4）。
 
 ### 4.3.2 图标
 
@@ -227,26 +227,35 @@ signtool 不在 PATH 里（Windows SDK 只在带版本号的目录下），脚�
 受信任根里，Windows 仍会显示「未知发布者」；要消掉得买 OV/EV 证书，
 到时候把指纹换进 `sign.env.json` 即可，构建脚本一行不用改。
 
-### 4.3.4 材质是组件自己的属性（v0.9.0）
+### 4.3.4 材质：全局统一 + 单卡可覆盖（v0.9.0 → v0.9.1 定稿）
 
-v0.8 之前只有一个全局 `cfg.material`：在组件库里点一下材质按钮，`body[data-material]`
-一换，**桌面上所有卡片一起变**。用户要的其实是「新添加的这个组件用这个材质」——
-组件库是「选组件 + 选材质 + 选尺寸」的添加器，不是全局设置面板。v0.9 把因果倒回来：
+这里来回改过两轮，值得把结论写清楚：
+
+- v0.8 是纯全局 `cfg.material`，但玻璃白膜画错层 + 明暗自适应乱翻，
+  用户看到的是「选了玻璃没生效」。
+- v0.9.0 把材质拆成每卡一份（组件库选的只给新卡）。**这一步过度解读了**——
+  用户下一轮明确说「修改材质的时候需要所有元素一起修改，包括各个组件」。
+- v0.9.1 定稿：**改材质 = 全局统一应用**，四类元素（所有卡片 / 添加组件页 /
+  关于页 / 天气地区页）同一时刻一起变；同时保留右键单卡换材质作为**事后覆盖**，
+  下一次改全局会重新统一。真正该修的一直是「卡片 `data-material` 不刷新」，
+  以及玻璃配色，不是把材质切成 N 份。
 
 | 层 | 归属 | 谁改它 |
 | --- | --- | --- |
-| `WidgetCfg.material` | 每张卡片自己 | 组件库添加时 / 卡片右键「材质」分组 |
-| `cfg.material` | 全局，只管收纳面板与所有浮层 | 托盘材质菜单 |
+| `cfg.material` | 全局，管所有卡片 + 收纳面板 + 全部浮层 | 组件库材质按钮 → `setGlobalMaterial()` |
+| `WidgetCfg.material` | 单卡覆盖（空串＝跟随全局） | 卡片右键「材质」分组 |
 | `body[data-tone]` | 全局，只影响**玻璃卡**内部深浅 | 底图整屏亮度采样 |
 
-数据流：`openGallery` 把面板当前选中的 `mat` 随 `onAdd(kind, size, material)` 传出来 →
-`addWidget` 写进新组件的 `material` → `buildCard` 把 `w.material || cfg.material` 落到
-卡片 `data-material`。空串表示「跟随全局」，这样 v0.8 及更早的配置不用迁移就能用。
+数据流（v0.9.1）：组件库点材质 → `onChange({material})` → `setGlobalMaterial()`
+做全局同步；`onAdd(kind, size, material)` 只是把同一个值带给新卡，`buildCard` 用
+`w.material || cfg.material` 落到 `data-material`。空串＝跟随全局，老配置免迁移。
+**关键不在「谁给新卡什么材质」，而在 `setGlobalMaterial` 里的 `syncCardMaterials()`
+——它负责刷新已有的那些卡片**（v0.9.0 缺的就是这一步）。
 
 CSS 的关键改动是把材质变量**下沉**：`--ink/--fill/--veil/--stroke` 原来只定义在
 `body[data-material=X]` 上，现在并列挂到 `.card[data-material=X]`；收纳面板继续用
 `body[data-material=X] .panel`。卡片是变量的作用域边界，后代自动继承，
-所以同屏可以并存一张暮色卡和一张玻璃卡。
+所以右键把某张卡单独设成暮色时，同屏可以并存暮色卡和玻璃卡。
 
 两个容易漏的地方：
 
@@ -255,11 +264,49 @@ CSS 的关键改动是把材质变量**下沉**：`--ink/--fill/--veil/--stroke`
    每张卡用自己的 ink，暮色 / 石墨卡的浅字才对（这个 bug 是 dump 里
    `getComputedStyle().color` 和背景色对不上才发现的，光看截图容易被过渡动画骗过去）。
 2. **`body[data-tone="dark"]` 要限定 `.card[data-material="glass"]`**。0.7 那套
-   明暗自适应是全局选择器，会把暮色 / 石墨也一起翻；组件级材质下必须收窄到玻璃卡，
+   明暗自适应是全局选择器，会把暮色 / 石墨也一起翻；材质变量下沉到卡片后必须收窄到玻璃卡，
    否则「用户选了暮色」和「系统按亮度翻色」会打架。
 
 抓屏判断也跟着改：`needsShot()` 不再看 `cfg.material === 'solid'`，而是看**有没有
 任何一张卡需要底图**（玻璃 / 暮色）。全局设成石墨、但有一张玻璃卡时仍要抓屏。
+
+#### v0.9.1：一次改材质，四类元素一起走
+
+`setGlobalMaterial(mat)` 是唯一的材质变更入口，按顺序做五件事：
+
+1. `S.cfg.material = mat`；
+2. 把 `S.cfg.widgets[*].material` 全部清空（回到「跟随全局」）——这是
+   **「所有元素一起改」的语义**，之前右键单独设过的卡也被统一；
+3. `applyMaterial()` 写 `body[data-material]` → 收纳面板与所有浮层的
+   `--pop-*` / `--gal-*` 变量跟着走；
+4. `syncCardMaterials()` 逐张刷新 `#stage .card` 的 `data-material`——
+   **这一步是 v0.9.0 漏掉的**：`buildCard` 只在渲染时求值一次，
+   只改 body 卡片不会重算，所以用户看到「页面变了、组件没变」；
+5. 同步组件库的选中态（`.gal[data-mat]` + 按钮 `aria-pressed`，经
+   `openGallery` 暴露的 `setMaterial()`），再 `loadGlass()` 重判抓屏。
+
+组件库之所以要单独同步，是因为它自有一套 `--gal-*` 变量、按 `.gal[data-mat]`
+取值，不吃 body 的 `--pop-*`。两个变量组各管一摊，改材质时都得照顾到。
+
+### 4.3.5 浮层窗口：可拖动 / 点外部不关 / x 才关（v0.9.1）
+
+三个浮层（组件库 `#gallery`、关于 `#about`、弹窗 `.modal`）此前都是
+`position:fixed; inset:0; place-items:center` 的遮罩，窗口固定居中，
+而且组件库和关于页都写了 `if (e.target === host) return close()`——
+点一下窗口外的暗色区域就整个消失，很容易误关。
+
+`floatwin.js::makeDraggable(panel, handle, key)` 统一处理：
+
+- **拖动**：从标题栏 `mousedown` 起，用 `transform: translate(x,y)` 做偏移，
+  不改布局、不动居中基准。位置按 `fy.float.<key>` 存在 `localStorage`，
+  关掉再开还在上次的地方；不写进 `config.json`，避免配置被窗口坐标污染。
+- **跳过交互元素**：`button, a, input, textarea, select, label, [data-act]` 上
+  不起拖，材质按钮 / 关闭按钮 / 搜索框照常可点。
+- **宽松边界**：偏移不超过半屏减一点，窗口不会整块飞出视口。
+- **关闭**：删掉两处点遮罩 `close()`；只有右上角 `x`、Esc、弹窗「取消」才关。
+  天气地区弹窗补了 `.modal-x`，与另外两个窗口一致。
+- 拖动期间 `document.body.style.userSelect = 'none'`，结束恢复，
+  免得标题文字被选中成一片蓝。
 
 ### 4.4 分组的格子系统
 
@@ -543,10 +590,22 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     要么带 `FY_ALLOW_MULTI=1`。另外 `spawn_shot` 截图后会 `app.exit(0)`，而
     `dumpLayout` 的 `invoke('dev_dump')` 是异步的，json 有时抢不到落盘——
     **dump 偶尔缺失不等于功能没生效**，以配置落盘 + computed style 为准。
+    深挖一层：`dumpLayout` 挂在 `loadGlass().then(...)` 里，抓屏慢时两拍
+    （400ms / 6s）都可能排在截图退出之后。所以要验证某个瞬时状态，
+    就在调试分支里**自己同步 `invoke('dev_dump')`**，别等 boot 那两拍。
+35. **只改 `body` 上的 CSS 变量，不会让「渲染时固化」的 DOM 属性跟着变** →
+    卡片的 `data-material` 是 `buildCard` 里 `w.material || cfg.material`
+    求一次值写死的。改全局材质后 body 变量换了、浮层全变色，唯独桌面组件
+    纹丝不动，用户视角就是「改材质没一起改」。**凡是 CSS 靠属性选择器命中，
+    JS 就得显式刷新那个属性**；变量继承只能救「用 var() 取值的地方」。
+36. **模态遮罩上的 `e.target === host → close()` 是误关重灾区** → 桌面常驻
+    程序里点一下窗口外的桌面是极自然的动作，窗口却整个消失。改成只有
+    `x` / Esc / 取消才关；同时把窗口做成可拖动的（translate 偏移），
+    用户才能把它挪到不挡事的地方，而不是被迫关掉重开。
 
 ## 10. 后续路线
 
 | 版本 | 内容 |
 | --- | --- |
-| v0.9.1 | 格子内拖拽排序、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测）、多屏支持、备忘录可编辑、模糊强度可调 |
+| v0.9.2 | 格子内拖拽排序、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测）、多屏支持、备忘录可编辑、模糊强度可调 |
 | v1.0.0 | 正式代码签名证书（替换自签）、GitHub 仓库与 release 流程跑通 |
