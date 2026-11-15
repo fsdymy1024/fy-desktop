@@ -81,10 +81,17 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 if let Some(state) = app.try_state::<crate::state::AppState>() {
                     let root = crate::desktop::root_dir(&state.config());
                     let _ = std::fs::create_dir_all(&root);
-                    crate::desktop::open_path(&root.to_string_lossy());
+                    if let Err(e) = crate::desktop::open_path(&root.to_string_lossy()) {
+                        eprintln!("[tray] 打开收纳文件夹失败：{e}");
+                    }
                 }
             }
-            "conf" => crate::commands::open_config_dir(),
+            "conf" => {
+                if let Err(e) = crate::desktop::open_path(&crate::config::config_path().to_string_lossy())
+                {
+                    eprintln!("[tray] 打开配置目录失败：{e}");
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })

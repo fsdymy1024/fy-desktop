@@ -14,6 +14,9 @@ pub struct Hour {
     pub label: String,
     pub temp: i32,
     pub icon: String,
+    /// 这一格是不是明天。前端只在列上加一个点，不把「明」写进标签——
+    /// 卡片最小宽度下一列只有 29px，多一个字就换行。
+    pub tomorrow: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,13 +78,20 @@ fn wttr(code: u32) -> (&'static str, &'static str) {
     }
 }
 
+/// "2026-11-15T22:00" → "2026-11-15T22"，只保留到小时，用来对齐时次
+fn hour_key(s: &str) -> Option<&str> {
+    s.get(0..13)
+}
+
 async fn try_open_meteo(cfg: &Config) -> Option<Weather> {
+    // forecast_days 必须是 2：只要 1 天的话，22 点以后 hourly 数组只剩 2 格，
+    // 「未来 6 小时」会被截成「今天剩下的小时」。跨天是常态，不是边界情况。
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}\
          &current=temperature_2m,weather_code\
          &hourly=temperature_2m,weather_code\
          &daily=temperature_2m_max,temperature_2m_min\
-         &forecast_days=1&timezone=auto",
+         &forecast_days=2&timezone=auto",
         cfg.weather.lat, cfg.weather.lon
     );
     let client = reqwest::Client::builder()
@@ -109,30 +119,36 @@ async fn try_open_meteo(cfg: &Config) -> Option<Weather> {
             .and_then(|a| a.as_array())
             .cloned()
             .unwrap_or_default();
-        // 从「当前小时」往后取 6 个
-        let now_hour = chrono_hour(arr);
+        // 「当前小时」以接口返回的 current.time 为准（timezone=auto，就是当地时刻），
+        // 这样跨时区、跨夏令时都不用本地钟去猜。
+        let now = v
+            .pointer("/current/time")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default();
+        let now_key = hour_key(now);
+        let today = now.get(0..10);
+
         let start = arr
             .iter()
             .position(|t| {
-                t.as_str()
-                    .and_then(|s| s.get(11..13))
-                    .and_then(|h| h.parse::<u32>().ok())
-                    == Some(now_hour)
+                let s = t.as_str().unwrap_or_default();
+                match (hour_key(s), now_key) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => false,
+                }
             })
             .unwrap_or(0);
+
         for i in start..(start + 6).min(arr.len()) {
-            let label = arr
-                .get(i)
-                .and_then(|t| t.as_str())
-                .and_then(|s| s.get(11..13))
-                .map(|h| format!("{h}时"))
-                .unwrap_or_default();
+            let raw = arr.get(i).and_then(|t| t.as_str()).unwrap_or_default();
+            let hh = raw.get(11..13).unwrap_or("--");
             let t = temps.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0);
             let c = codes.get(i).and_then(|x| x.as_u64()).unwrap_or(3) as u32;
             hours.push(Hour {
-                label,
+                label: format!("{hh}时"),
                 temp: t.round() as i32,
                 icon: wmo(c).1.to_string(),
+                tomorrow: raw.get(0..10).is_some() && raw.get(0..10) != today,
             });
         }
     }
@@ -150,15 +166,15 @@ async fn try_open_meteo(cfg: &Config) -> Option<Weather> {
     })
 }
 
-/// 本机当前小时，避免 extra 依赖，直接读系统时间
-fn chrono_hour(_times: &[serde_json::Value]) -> u32 {
+/// 本地时刻（当天已过的分钟数），避免 extra 依赖。
+/// 时区按 UTC+8 兜底——项目面向中文用户，且这条只在 wttr 兜底链路里用到。
+fn local_minutes_now() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // 本地时区偏移由系统 TZ 决定；这里用 UTC + 8 兜底（项目面向中文用户）
-    (((secs + 8 * 3600) % 86400) / 3600) as u32
+    (((secs + 8 * 3600) % 86400) / 60) as u32
 }
 
 async fn try_wttr(cfg: &Config) -> Option<Weather> {
@@ -183,29 +199,46 @@ async fn try_wttr(cfg: &Config) -> Option<Weather> {
         .unwrap_or(cond)
         .to_string();
 
+    // wttr 给的是 3 小时一档、连续 3 天。以前只看第一天、从第二条开始取 6 条，
+    // 22 点以后既跨不了天，也取不到「未来」；这里拉平三天按绝对时刻筛。
     let mut hours = Vec::new();
-    if let Some(arr) = v.get("weather").and_then(|w| w.as_array()) {
-        if let Some(today) = arr.first() {
-            if let Some(hs) = today.get("hourly").and_then(|h| h.as_array()) {
-                for h in hs.iter().skip(1).take(6) {
-                    let time = h.get("time").and_then(|t| t.as_str()).unwrap_or("0");
-                    let label = format!("{}时", (time.parse::<u32>().unwrap_or(0) / 100).min(23));
-                    let t = h
-                        .get("tempC")
-                        .and_then(|x| x.as_str())
-                        .and_then(|s| s.parse::<i32>().ok())
-                        .unwrap_or(0);
-                    let c = h
-                        .get("weatherCode")
-                        .and_then(|x| x.as_str())
-                        .and_then(|s| s.parse::<u32>().ok())
-                        .unwrap_or(119);
-                    hours.push(Hour {
-                        label,
-                        temp: t,
-                        icon: wttr(c).1.to_string(),
-                    });
+    let now_min = local_minutes_now();
+    if let Some(days) = v.get("weather").and_then(|w| w.as_array()) {
+        let mut picked = 0;
+        for (d, day) in days.iter().enumerate() {
+            if picked >= 6 {
+                break;
+            }
+            let Some(hs) = day.get("hourly").and_then(|h| h.as_array()) else {
+                continue;
+            };
+            for h in hs {
+                if picked >= 6 {
+                    break;
                 }
+                let time = h.get("time").and_then(|t| t.as_str()).unwrap_or("0");
+                let hh = (time.parse::<u32>().unwrap_or(0) / 100).min(23);
+                let abs = d as u32 * 1440 + hh * 60;
+                if abs < now_min {
+                    continue;
+                }
+                let t = h
+                    .get("tempC")
+                    .and_then(|x| x.as_str())
+                    .and_then(|s| s.parse::<i32>().ok())
+                    .unwrap_or(0);
+                let c = h
+                    .get("weatherCode")
+                    .and_then(|x| x.as_str())
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(119);
+                hours.push(Hour {
+                    label: format!("{hh}时"),
+                    temp: t,
+                    icon: wttr(c).1.to_string(),
+                    tomorrow: d > 0,
+                });
+                picked += 1;
             }
         }
     }

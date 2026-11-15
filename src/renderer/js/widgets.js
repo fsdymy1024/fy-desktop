@@ -24,8 +24,12 @@ const dialSize = (body) => {
   if (!body) return 120;
   // .body 上下 12px、左右 13px 的内边距要扣掉，否则表盘会顶到卡片边缘
   const h = body.clientHeight - 26;
-  const w = (body.clientWidth - 26) * 0.56;
-  return Math.round(Math.max(72, Math.min(h, w, 320)));
+  // 右边那块时间/日期是按内容占宽的、压不扁，以前按「宽度 × 0.56」估，
+  // 卡片拉到最小时估多了，表盘就压到「22:40」上面。直接量它。
+  const side = body.querySelector('.ck-side');
+  const sideW = side ? side.offsetWidth : 88;
+  const w = body.clientWidth - 26 - sideW - 14; // 内边距 + .ck 的 gap
+  return Math.round(Math.max(64, Math.min(h, w, 320)));
 };
 
 function dialSvg(size) {
@@ -69,7 +73,7 @@ export const REGISTRY = {
     name: '天气',
     desc: '实时温度、天气状况与逐时预报',
     size: [296, 128],
-    min: [248, 118],
+    min: [204, 104],
     preview: () => `<div class="mini"><b>17°</b>多云 · 最高 20°</div>`,
     mount(body) {
       body.innerHTML = `
@@ -111,7 +115,9 @@ export const REGISTRY = {
           hours.innerHTML = (w.hours || [])
             .slice(0, 6)
             .map(
-              (h) => `<div class="h"><span>${esc(h.label)}</span>${wxIcon(h.icon, 13)}<b>${h.temp}°</b></div>`
+              (h) =>
+                `<div class="h${h.tomorrow ? ' tmr' : ''}" title="${h.tomorrow ? '明天 ' : ''}${esc(h.label)}">` +
+                `<span>${esc(h.label)}</span>${wxIcon(h.icon, 13)}<b>${h.temp}°</b></div>`
             )
             .join('');
         },
@@ -129,7 +135,7 @@ export const REGISTRY = {
     name: '模拟时钟',
     desc: '实时走针，附日期与本地时区',
     size: [296, 200],
-    min: [210, 150],
+    min: [196, 128],
     preview: () => `<div class="mini"><b>16:21</b>模拟表盘</div>`,
     mount(body) {
       body.innerHTML = `<div class="ck"><div class="ck-dial-slot"></div>
@@ -197,7 +203,7 @@ export const REGISTRY = {
     name: '数字时钟',
     desc: '极简大字号时间',
     size: [208, 90],
-    min: [160, 74],
+    min: [132, 62],
     preview: () => `<div class="mini"><b>16:21</b>数字时间</div>`,
     mount(body) {
       body.innerHTML = `<div class="dg"><div class="dg-time num"></div><div class="dg-date"></div></div>`;
@@ -220,7 +226,7 @@ export const REGISTRY = {
     name: '日历',
     desc: '当月网格与今日高亮',
     size: [296, 150],
-    min: [248, 132],
+    min: [212, 126],
     preview: () => `<div class="mini"><b>15</b>11月 · 周日</div>`,
     mount(body) {
       body.innerHTML = `<div class="cd">
@@ -271,7 +277,7 @@ export const REGISTRY = {
     name: '系统监视',
     desc: 'CPU / 内存 / 磁盘与 CPU 走势',
     size: [296, 150],
-    min: [250, 136],
+    min: [204, 116],
     preview: () => `<div class="mini"><b>12%</b>CPU · 内存 · 磁盘</div>`,
     mount(body) {
       body.innerHTML = `
@@ -337,7 +343,7 @@ export const REGISTRY = {
     name: '网络',
     desc: '上下行速率、延迟、信号与 IP',
     size: [296, 138],
-    min: [252, 128],
+    min: [200, 112],
     preview: () => `<div class="mini"><b>12.4</b>MB/s · 延迟 18ms</div>`,
     mount(body) {
       body.innerHTML = `
@@ -377,7 +383,9 @@ export const REGISTRY = {
         const raw = (hist || []).slice(-16);
         // 采样点不够时用首个真实值向左补齐，曲线从平线开始长
         const vals = raw.length ? Array(Math.max(0, 16 - raw.length)).fill(raw[0]).concat(raw) : [];
-        const { line, area } = spark(vals, w, h, 2, 32768);
+        // 量程自适应：以前写死 32KB/s 上限，宽带一跑就顶到画布顶部，
+        // 图变成一条贴着上沿的平线。宽度占 2/3 之后这个毛病更明显。
+        const { line, area } = spark(vals, w, h, 2);
         sparkEl.setAttribute('viewBox', `0 0 ${w} ${h}`);
         sparkEl.innerHTML = `
           <defs><linearGradient id="ng" x1="0" y1="0" x2="0" y2="1">
@@ -425,7 +433,7 @@ export const REGISTRY = {
     name: '备忘录',
     desc: '随手记两行，自动保存',
     size: [296, 116],
-    min: [220, 90],
+    min: [160, 72],
     preview: () => `<div class="mini"><b>…</b>随手记</div>`,
     mount(body, ctx) {
       body.innerHTML = `<div class="nt-head">备忘录</div>

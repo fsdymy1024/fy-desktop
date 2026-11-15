@@ -95,8 +95,8 @@ pub async fn desktop_icons(paths: Vec<String>) -> Vec<(String, String)> {
 }
 
 #[tauri::command]
-pub fn open_path(path: String) {
-    desktop::open_path(&path);
+pub fn open_path(path: String) -> Result<(), String> {
+    desktop::open_path(&path)
 }
 
 #[tauri::command]
@@ -107,14 +107,16 @@ pub fn reveal_path(path: String) {
 #[tauri::command]
 pub fn open_root(state: State<'_, AppState>) -> Result<(), String> {
     let root = desktop::root_dir(&state.config());
-    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    desktop::open_path(&root.to_string_lossy());
-    Ok(())
+    if let Err(e) = std::fs::create_dir_all(&root) {
+        desktop::log_launch(&format!("open_root 建目录失败 {}：{e}", root.display()));
+        return Err(format!("收纳目录不可用：{e}"));
+    }
+    desktop::open_path(&root.to_string_lossy())
 }
 
 #[tauri::command]
-pub fn open_config_dir() {
-    desktop::open_path(&crate::config::config_path().to_string_lossy());
+pub fn open_config_dir() -> Result<(), String> {
+    desktop::open_path(&crate::config::config_path().to_string_lossy())
 }
 
 #[tauri::command]

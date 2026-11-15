@@ -67,7 +67,12 @@ async function boot() {
 
   if (S.shotMode) {
     // 等玻璃底图就绪再落盘，否则 json 里 glass 永远是 false
-    loadGlass().then(() => setTimeout(dumpLayout, 400));
+    // 两拍：400ms 那次拿布局与底图状态，6s 那次带上真实的指标/天气值
+    // （第一拍太早，counters 全是 0，看不出「数据到底有没有到」）
+    loadGlass().then(() => {
+      setTimeout(dumpLayout, 400);
+      setTimeout(dumpLayout, 6000);
+    });
   }
 
   // 调试：FY_UI=place|group 时自动打开对应弹层，方便截图核对样式与命中区
@@ -426,9 +431,18 @@ function renderPanel() {
   scheduleTone();
 }
 
+/** 打开类动作失败必须说话。
+ *  以前 invoke 被拒时 promise 静默 reject，界面上只表现为「点了没反应」，
+ *  连是路径问题还是系统拒绝都分不清。 */
+function guardOpen(p) {
+  return Promise.resolve(p).catch((err) => {
+    toast(`打开失败：${err?.message || err}`);
+  });
+}
+
 const handlers = {
   icons: (paths) => invoke('desktop_icons', { paths }),
-  open: (path) => invoke('open_path', { path }),
+  open: (path) => guardOpen(invoke('open_path', { path })),
   reveal: (path) => invoke('reveal_path', { path }),
   fold: (id) => {
     const f = new Set(S.cfg.organizer.folded || []);
@@ -473,7 +487,7 @@ const handlers = {
         label: '在资源管理器中打开',
         act: () => {
           const folder = S.view?.groups?.find((x) => x.id === gid)?.folder;
-          if (folder) invoke('open_path', { path: folder });
+          if (folder) guardOpen(invoke('open_path', { path: folder }));
         }
       },
       { sep: true },
@@ -487,7 +501,7 @@ const handlers = {
       }
     ]);
   },
-  openRoot: () => invoke('open_root'),
+  openRoot: () => guardOpen(invoke('open_root')),
   refresh: async () => {
     await invoke('desktop_icons', { paths: [] }).catch(() => {});
     await refreshDesktop();
@@ -528,7 +542,7 @@ const handlers = {
       { x: e.clientX, y: e.clientY },
       [
         { label: decodeURIComponent(path.split(/[\\/]/).pop()), head: true },
-        { label: '打开', act: () => invoke('open_path', { path }) },
+        { label: '打开', act: () => guardOpen(invoke('open_path', { path })) },
         { label: '打开所在位置', act: () => invoke('reveal_path', { path }) },
         { sep: true },
         { label: '移出到桌面', act: () => handlers.moveOut([path]) },
@@ -1092,6 +1106,50 @@ function dumpLayout() {
         return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
       })(),
       glass: document.body.dataset.glass === '1',
+      // 日历卡与时钟卡在最小尺寸下的内部盒子：核对内容是「刚好塞下」还是「溢出被裁」
+      probe: (() => {
+        const out = {};
+        for (const kind of ['calendar', 'clock']) {
+          const card = document.querySelector(`#stage .card[data-kind="${kind}"]`);
+          if (!card) continue;
+          const body = card.querySelector('.body');
+          const box = (sel) => {
+            const el = card.querySelector(sel);
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+          };
+          out[kind] = {
+            body: box('.body'),
+            bodyScroll: [body?.clientWidth, body?.clientHeight, body?.scrollWidth, body?.scrollHeight],
+            grid: box('.cd-grid'),
+            week: box('.cd-week'),
+            side: box('.ck-side'),
+            dial: box('.ck-dial')
+          };
+        }
+        return out;
+      })(),
+      net: (() => {
+        const card = document.querySelector('#stage .card[data-kind="network"]');
+        if (!card) return null;
+        const box = (sel) => {
+          const el = card.querySelector(sel);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+        };
+        return {
+          top: box('.net-top'),
+          mid: box('.net-mid'),
+          main: box('.net-main'),
+          num: box('.net-num b'),
+          spark: box('.net-spark'),
+          foot: box('.net-foot'),
+          text: card.querySelector('.down')?.textContent,
+          bodyH: card.querySelector('.body')?.clientHeight
+        };
+      })(),
       counters: S.counters || {},
       bridge: dbg,
       shot: !!S.shot

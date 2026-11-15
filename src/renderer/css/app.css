@@ -222,12 +222,29 @@ body[data-glass="1"] .surface::before {
 }
 
 .wx-hours .h {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
   font-size: 9px;
   color: var(--ink3);
+  white-space: nowrap;
+}
+
+/* 跨到明天的那一格顶上加个小点：标签只写「0时」，靠这个点区分今天/明天，
+   免得最小宽度下多一个字就被挤换行 */
+.wx-hours .h.tmr::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.75;
 }
 
 .wx-hours .h svg {
@@ -522,14 +539,19 @@ body[data-glass="1"] .surface::before {
 .net-mid {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: 8px;
   margin-top: 6px;
   flex: 1;
+  /* 弹性行必须允许被压扁：<svg> 没写 height 时的默认对象高度是 150px，
+     它会通过 min-height:auto 撑住整行，把下面那行延迟/IP 挤出卡片外。 */
+  min-height: 0;
 }
 
+/* 数字块按内容宽度站住，剩下全给走势图——
+   走势图占右侧 2/3，横向信息密度才够看出一段时间的形状。 */
 .net-main {
-  flex: 1;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: 72px;
 }
 
 .net-num {
@@ -568,9 +590,16 @@ body[data-glass="1"] .surface::before {
 }
 
 .net-spark {
-  width: 92px;
-  height: 38px;
-  flex: 0 0 auto;
+  /* 占右边 2/3：弹性吃掉剩余宽度，高度跟着行高走（v0.5 前是死宽 92×38）。
+     min-height:0 是必须的——否则 SVG 的默认高度 150px 会变成 min-content，
+     走势图自己把卡片撑爆，下面的延迟行被 overflow 裁掉。 */
+  flex: 1 1 0;
+  width: auto;
+  min-width: 56px;
+  height: auto;
+  min-height: 0;
+  align-self: stretch;
+  overflow: visible;
 }
 
 .net-foot {
@@ -1418,9 +1447,15 @@ body[data-tone="dark"]:not([data-material="dusk"]) .cell.empty .ic {
   background: rgba(255, 255, 255, 0.04);
 }
 
-/* 原色：不铺底图，各卡片用自己的浅色底 */
+/* 原色：不铺底图，各卡片用自己的浅色底。
+   v0.5 之前是 rgba(252,247,240,.94)——几乎是纯白，铺在深色壁纸上像贴了一张
+   发光的纸，看久了刺眼。改成带灰的纸色、再压一档不透明度，字依然清楚，
+   但不再抢视线。 */
 body[data-material="solid"] .surface {
-  background: rgba(252, 247, 240, 0.94);
+  background: rgba(237, 232, 224, 0.9);
+  border-color: rgba(120, 90, 70, 0.14);
+  box-shadow: 0 14px 32px -24px rgba(46, 28, 14, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
 
 body[data-material="solid"] .surface::before,
@@ -1429,13 +1464,13 @@ body[data-material="solid"] .surface::after {
 }
 
 body[data-material="solid"] .cell {
-  background: rgba(120, 90, 70, 0.05);
-  border-color: rgba(120, 90, 70, 0.08);
+  background: rgba(255, 255, 255, 0.34);
+  border-color: rgba(120, 90, 70, 0.1);
 }
 
 body[data-material="solid"] .cell:hover {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(120, 90, 70, 0.16);
+  background: rgba(255, 255, 255, 0.66);
+  border-color: rgba(120, 90, 70, 0.18);
 }
 
 /* 卡片背后偏暗时自动切浅色字（由前端采样底图后加 .on-dark） */

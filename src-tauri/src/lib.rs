@@ -137,6 +137,17 @@ pub fn run() {
 
             tray::create(app.handle())?;
 
+            // FY_OPEN_ROOT=1：启动后立刻打开收纳目录。
+            // 「打开文件夹」这条链路没法靠点按钮来自动验证，留个入口给排查用。
+            if std::env::var("FY_OPEN_ROOT").is_ok() {
+                let root = desktop::root_dir(&cfg);
+                let _ = std::fs::create_dir_all(&root);
+                match desktop::open_path(&root.to_string_lossy()) {
+                    Ok(()) => println!("[open] 已打开 {}", root.display()),
+                    Err(e) => eprintln!("[open] 打开失败：{e}"),
+                }
+            }
+
             // 开机自启以配置为准。安装版首启默认开，之后用户从托盘关掉就按配置关。
             // dev 下不碰，免得把 debug exe 写进注册表。
             if !cfg!(debug_assertions) {

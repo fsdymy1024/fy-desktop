@@ -371,16 +371,86 @@ pub fn classify(cfg: &Config, items: &[Item]) -> Vec<(String, Vec<String>)> {
     buckets
 }
 
-pub fn open_path(path: &str) {
-    #[cfg(windows)]
+/// 打开动作留一行日志。
+///
+/// 这类失败是「点了没反应」，没有日志就只能猜——窗口打没打开，ShellExecute 回了
+/// 一个什么码，只有它知道。日志和配置放一起，用户出事时能找到。
+pub fn log_launch(msg: &str) {
+    use std::io::Write;
+    let dir = crate::config::config_path();
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("launch.log"))
     {
-        use std::os::windows::process::CommandExt;
-        // ShellExecute 走 explorer 默认关联，比 start 命令少一层引号解析
-        let _ = std::process::Command::new("cmd")
-            .args(["/c", "start", "", path])
-            .creation_flags(0x0800_0000)
-            .spawn();
+        let _ = writeln!(f, "{} {msg}", now_text());
     }
+}
+
+fn now_text() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (h, m, s) = (((secs + 8 * 3600) % 86400) / 3600, (secs / 60) % 60, secs % 60);
+    format!("[{h:02}:{m:02}:{s:02}]")
+}
+
+/// 用 ShellExecuteW 打开文件 / 文件夹 / 快捷方式。
+///
+/// 以前是 `cmd /c start "" <path>`：cmd 本身是以 CREATE_NO_WINDOW 起的，
+/// `start` 派生新进程时会继承「不要显示窗口」的启动信息，于是资源管理器窗口
+/// 在后台建好、又立刻按隐藏状态显示——用户看到的就是「点了没反应」。
+/// ShellExecuteW 直接交给外壳去执行默认动作，不经过 cmd，也就没有这层污染。
+///
+/// 返回 Err 时前端会弹 toast，别再让失败静默。
+#[cfg(windows)]
+pub fn open_path(path: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let op = HSTRING::from("open");
+    let file = HSTRING::from(path);
+    let ret = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(op.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // 返回值 > 32 才算成功；<= 32 是错误码（2 找不到文件、5 拒绝访问、31 无关联程序）
+    let code = ret.0 as isize;
+    log_launch(&format!("open {path} → {code}"));
+    if code > 32 {
+        return Ok(());
+    }
+
+    // 外壳拒绝时退回 explorer：至少文件夹还能开
+    let fell = std::process::Command::new("explorer")
+        .arg(path)
+        .creation_flags(0)
+        .spawn();
+    log_launch(&format!(
+        "  fallback explorer {path} → {}",
+        match &fell {
+            Ok(_) => "ok".to_string(),
+            Err(e) => e.to_string(),
+        }
+    ));
+    fell.map(|_| ()).map_err(|e| format!("打开失败（{code}）：{e}"))
+}
+
+#[cfg(not(windows))]
+pub fn open_path(path: &str) -> Result<(), String> {
+    let _ = path;
+    Err("仅支持 Windows".into())
 }
 
 pub fn reveal_path(path: &str) {
@@ -389,7 +459,7 @@ pub fn reveal_path(path: &str) {
         use std::os::windows::process::CommandExt;
         let _ = std::process::Command::new("explorer")
             .arg(format!("/select,{path}"))
-            .creation_flags(0x0800_0000)
+            .creation_flags(0)
             .spawn();
     }
 }
