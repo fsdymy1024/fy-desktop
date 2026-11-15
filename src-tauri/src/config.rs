@@ -44,7 +44,11 @@ pub struct OrganizerCfg {
 pub struct WeatherCfg {
     pub lat: f64,
     pub lon: f64,
+    /// 末级地名，卡片标题显示它（如「西湖区」）
     pub city: String,
+    /// 完整行政区划，鼠标悬停时显示（如「浙江省 · 杭州市 · 西湖区」）
+    #[serde(default)]
+    pub admin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +88,7 @@ fn d_weather() -> WeatherCfg {
         lat: 31.2304,
         lon: 121.4737,
         city: "上海".into(),
+        admin: "上海市".into(),
     }
 }
 

@@ -17,7 +17,16 @@ export function setShowSeconds(on) {
 /** 秒的部分，不显示时为空串 */
 const secSpan = (s) => (SHOW_SECONDS ? `<small>${pad2(s)}</small>` : '');
 
-const dialSize = (body) => Math.min(body.clientHeight, body.clientWidth * 0.52, 140);
+/** 表盘直径：跟着卡片内部可用尺寸走。
+ *  以前在 mount 时算一次、且写死 140 上限，卡片放大后表盘不动，看起来像没生效。
+ *  现在每次 tick 都对一次尺寸，拉角、换布局、首帧都能跟上。 */
+const dialSize = (body) => {
+  if (!body) return 120;
+  // .body 上下 12px、左右 13px 的内边距要扣掉，否则表盘会顶到卡片边缘
+  const h = body.clientHeight - 26;
+  const w = (body.clientWidth - 26) * 0.56;
+  return Math.round(Math.max(72, Math.min(h, w, 320)));
+};
 
 function dialSvg(size) {
   const c = size / 2;
@@ -93,6 +102,8 @@ export const REGISTRY = {
         weather(w) {
           if (!w) return empty('暂不可用');
           city.textContent = w.city || '天气';
+          const card = body.closest('.card');
+          if (card) card.title = w.admin ? `${w.admin}` : '';
           src.textContent = w.source === 'wttr.in' ? 'wttr' : '';
           temp.innerHTML = `${w.temp}<sup>°</sup>`;
           cond.innerHTML = `${wxIcon(w.icon)}<span>${esc(w.cond)}</span>`;
@@ -135,8 +146,8 @@ export const REGISTRY = {
       let hands = null;
 
       const build = () => {
-        const s = Math.max(96, Math.round(dialSize(body.parentElement) || 132));
-        if (Math.abs(s - size) < 6) return;
+        const s = Math.max(72, dialSize(body));
+        if (Math.abs(s - size) < 4) return;
         size = s;
         slot.innerHTML = dialSvg(s);
         hands = {
@@ -151,7 +162,9 @@ export const REGISTRY = {
         const d = new Date();
         time.innerHTML = `${pad2(d.getHours())}:${pad2(d.getMinutes())}${secSpan(d.getSeconds())}`;
         date.textContent = `${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]}`;
-        if (!hands) build();
+        // 不能只在 mount 里画一次：那时卡片还没 place() 定尺寸，只能拿到 0，
+        // 表盘会永远停在最小档。每秒对一次尺寸，拉角/换布局/首帧都自动跟上。
+        build();
         if (!hands) return;
         const sec = d.getSeconds();
         const min = d.getMinutes() + sec / 60;
@@ -163,6 +176,8 @@ export const REGISTRY = {
       };
 
       tick();
+      // 首帧再补一次：mount 发生在 place() 之前，等布局落定才拿得到真实尺寸
+      requestAnimationFrame(tick);
       const timer = setInterval(tick, 1000);
       return {
         tick,
@@ -384,6 +399,8 @@ export const REGISTRY = {
           upU.textContent = u.u;
           lat.textContent = s.latency ? String(s.latency) : '--';
           ip.textContent = s.ip || '';
+          // 悬停能看到「这块 IP 属于哪块网卡」，排查多网卡时很有用
+          ip.title = s.iface ? `${s.iface} · ${s.ip}` : s.ip || '';
 
           const l = s.link || {};
           link.textContent = l.kind === 'wifi' ? l.ssid || 'Wi-Fi' : l.kind === 'ethernet' ? '有线' : '未连接';

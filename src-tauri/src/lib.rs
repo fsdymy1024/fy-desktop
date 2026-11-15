@@ -8,6 +8,7 @@ pub mod autostart;
 pub mod commands;
 pub mod config;
 pub mod desktop;
+pub mod geo;
 pub mod monitor;
 pub mod state;
 pub mod tray;
@@ -74,6 +75,8 @@ pub fn run() {
             commands::glass_snapshot,
             commands::set_autostart,
             commands::weather_now,
+            commands::geo_search,
+            commands::set_weather_place,
             commands::weather_refresh,
             commands::set_material,
             commands::quit_app,
@@ -144,7 +147,7 @@ pub fn run() {
             }
 
             monitor::spawn(app.handle().clone());
-            weather::spawn(app.handle().clone(), cfg.clone());
+            weather::spawn(app.handle().clone());
             window::spawn_hit_guard(app.handle().clone());
 
             // 前端没在 4.5s 内就绪就强制显示窗口（配合渲染层的错误屏兜底）
@@ -315,6 +318,23 @@ fn spawn_selftest(app: tauri::AppHandle) {
         // 7) 收纳根目录可写
         let writable = std::fs::create_dir_all(&root).is_ok();
         check("收纳根可写", writable, root.to_string_lossy().to_string());
+
+        // 8) 出口网卡 IP：一定不能是回环，也不能空
+        let (ip, iface) = monitor::egress_probe();
+        check(
+            "出口网卡 IP",
+            !ip.is_empty() && !ip.starts_with("127."),
+            format!("{ip} / {iface}"),
+        );
+
+        // 9) 地名搜索（需要联网，失败只记为信息，不算自检失败）
+        match tauri::async_runtime::block_on(geo::search("西湖区")) {
+            Ok(list) if !list.is_empty() => {
+                println!("  · 地名搜索  命中 {} 条，首条：{}", list.len(), list[0].label);
+            }
+            Ok(_) => println!("  · 地名搜索  无结果（可能离线或接口变动）"),
+            Err(e) => println!("  · 地名搜索  跳过：{e}"),
+        }
 
         println!("[selftest] 通过 {pass} 项，失败 {fail} 项");
         app.exit(if fail == 0 { 0 } else { 1 });

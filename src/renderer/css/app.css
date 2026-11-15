@@ -1490,3 +1490,138 @@ body[data-material="solid"] .cell:hover {
   background: none;
   color: rgba(26, 22, 19, 0.6);
 }
+
+/* ==========================================================================
+   弹层（新建/重命名分组、天气地区）
+   与右键菜单同一套浅色卡面：深色壁纸下也让表单保持高对比。
+   ========================================================================== */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(28, 20, 15, 0.34);
+}
+
+.modal-card {
+  width: 340px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 252, 248, 0.985);
+  border: 1px solid rgba(120, 90, 70, 0.12);
+  box-shadow: 0 34px 60px -30px rgba(40, 25, 15, 0.85);
+  color: rgba(26, 22, 19, 0.86);
+}
+
+.modal-title {
+  font-size: 12.5px;
+  font-weight: 650;
+  margin-bottom: 10px;
+}
+
+.modal-hint {
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: rgba(26, 22, 19, 0.5);
+  margin-bottom: 8px;
+}
+
+.modal-row {
+  display: flex;
+  gap: 8px;
+}
+
+.modal-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(120, 90, 70, 0.22);
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  outline: 0;
+  user-select: text;
+}
+
+.modal-input:focus {
+  border-color: rgba(226, 98, 44, 0.55);
+  box-shadow: 0 0 0 3px rgba(226, 98, 44, 0.12);
+}
+
+.modal-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.place-list {
+  margin-top: 10px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.place-list[hidden] {
+  display: none;
+}
+
+.place-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  text-align: left;
+  color: inherit;
+}
+
+.place-item:hover {
+  background: rgba(226, 98, 44, 0.12);
+}
+
+.place-item b {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.place-item span {
+  font-size: 10px;
+  color: rgba(26, 22, 19, 0.45);
+}
+
+.place-tip {
+  padding: 8px 9px;
+  font-size: 10.5px;
+  color: rgba(26, 22, 19, 0.5);
+}
+
+/* 拖拽对齐参考线 */
+.guide-v,
+.guide-h {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  background: #e2622c;
+  opacity: 0.82;
+}
+
+.guide-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.guide-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}

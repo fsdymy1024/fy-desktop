@@ -8,6 +8,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let add = MenuItem::with_id(app, "add", "添加组件…", true, None::<&str>)?;
     let edit = MenuItem::with_id(app, "edit", "编辑布局", true, None::<&str>)?;
     let glass = MenuItem::with_id(app, "glass", "刷新桌面底图", true, None::<&str>)?;
+    let place = MenuItem::with_id(app, "place", "天气地区…", true, None::<&str>)?;
     let auto = CheckMenuItem::with_id(app, "autostart", "开机自启", true, false, None::<&str>)?;
     let secs = CheckMenuItem::with_id(app, "seconds", "时钟显示秒", true, true, None::<&str>)?;
     let root = MenuItem::with_id(app, "root", "打开收纳文件夹", true, None::<&str>)?;
@@ -20,6 +21,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &add,
             &edit,
             &glass,
+            &place,
             &auto,
             &secs,
             &PredefinedMenuItem::separator(app)?,
@@ -47,6 +49,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             }
             "glass" => {
                 let _ = app.emit("tray:action", "glass");
+            }
+            "place" => {
+                let _ = app.emit("tray:action", "place");
             }
             "autostart" => {
                 let now = crate::autostart::is_enabled();

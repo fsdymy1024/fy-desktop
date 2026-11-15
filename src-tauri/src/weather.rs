@@ -7,7 +7,7 @@ use crate::config::Config;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Hour {
@@ -19,6 +19,8 @@ pub struct Hour {
 #[derive(Debug, Clone, Serialize)]
 pub struct Weather {
     pub city: String,
+    /// 省 · 市 · 区，前端做悬停提示
+    pub admin: String,
     pub temp: i32,
     pub cond: String,
     pub icon: String,
@@ -34,7 +36,7 @@ pub fn latest() -> Option<Weather> {
     LATEST.lock().ok().and_then(|g| g.clone())
 }
 
-fn store(w: &Weather) {
+pub fn store(w: &Weather) {
     if let Ok(mut g) = LATEST.lock() {
         *g = Some(w.clone());
     }
@@ -137,6 +139,7 @@ async fn try_open_meteo(cfg: &Config) -> Option<Weather> {
 
     Some(Weather {
         city: cfg.weather.city.clone(),
+        admin: cfg.weather.admin.clone(),
         temp: temp.round() as i32,
         cond: cond.into(),
         icon: icon.into(),
@@ -222,6 +225,7 @@ async fn try_wttr(cfg: &Config) -> Option<Weather> {
 
     Some(Weather {
         city: cfg.weather.city.clone(),
+        admin: cfg.weather.admin.clone(),
         temp,
         cond: desc,
         icon: icon.into(),
@@ -239,10 +243,15 @@ pub async fn fetch(cfg: &Config) -> Option<Weather> {
     try_wttr(cfg).await
 }
 
-/// 后台每 15 分钟刷新一次，首次立刻拉
-pub fn spawn(app: AppHandle, cfg: Config) {
+/// 后台每 15 分钟刷新一次，首次立刻拉。
+/// 每轮都从共享状态读配置，用户在设置里换了地区不必重启进程。
+pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
+            let cfg = match app.try_state::<crate::state::AppState>() {
+                Some(s) => s.config(),
+                None => Config::default_for(1920.0, 1080.0),
+            };
             let got = fetch(&cfg).await;
             match got {
                 Some(w) => {

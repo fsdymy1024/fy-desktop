@@ -187,9 +187,17 @@ export function renderOrganizer(el, cfg, view, handlers) {
 
   el.oncontextmenu = (e) => {
     const cell = e.target.closest('.cell[data-path]');
-    if (!cell) return;
-    e.preventDefault();
-    handlers.menu(e, cell.dataset.path, cell.dataset.group);
+    if (cell) {
+      e.preventDefault();
+      handlers.menu(e, cell.dataset.path, cell.dataset.group);
+      return;
+    }
+    // 分组标题上右键 → 改名 / 调顺序 / 删除
+    const head = e.target.closest('.shelf-head[data-g]');
+    if (head) {
+      e.preventDefault();
+      if (head.dataset.g !== '__loose') handlers.groupMenu?.(e, head.dataset.g);
+    }
   };
 
   // ---- 拖拽 ----

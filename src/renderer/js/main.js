@@ -69,6 +69,10 @@ async function boot() {
     // 等玻璃底图就绪再落盘，否则 json 里 glass 永远是 false
     loadGlass().then(() => setTimeout(dumpLayout, 400));
   }
+
+  // 调试：FY_UI=place|group 时自动打开对应弹层，方便截图核对样式与命中区
+  if (b.uitest === 'place') setTimeout(() => pickPlace(), 400);
+  if (b.uitest === 'group') setTimeout(() => promptInput('新建分组', '例如：设计素材'), 400);
 }
 
 function layoutStage() {
@@ -199,7 +203,101 @@ function bindCard(el, w) {
     if (!S.edit) return;
     startDrag(e, el, w, 'resize');
   });
+
+  // 双击天气卡直接改地区：这是最常用的设置，不该藏进托盘
+  if (w.kind === 'weather') {
+    el.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.wtool')) return;
+      pickPlace();
+    });
+  }
 }
+
+/* ---- 网格吸附 ----
+ *
+ * 两个层次：
+ * 1) 兜底落 8 设计像素网格，拖出来的坐标不会出现 3px、5px 这种歪数；
+ * 2) 优先贴其它卡片的参考线（左/中/右、上/中/下），6px 内直接对齐，
+ *    这样不同组件能落在同一条线上，宽高也能对齐成一样。
+ */
+const GRID = 8;
+const SNAP_TOL = 6;
+
+let guides = null;
+function ensureGuides() {
+  if (guides) return guides;
+  const stage = $('#stage');
+  const v = document.createElement('div');
+  v.className = 'guide-v';
+  v.hidden = true;
+  const h = document.createElement('div');
+  h.className = 'guide-h';
+  h.hidden = true;
+  stage.append(v, h);
+  guides = { v, h };
+  return guides;
+}
+function showGuides(gx, gy) {
+  const g = ensureGuides();
+  if (gx == null) g.v.hidden = true;
+  else {
+    g.v.hidden = false;
+    g.v.style.left = `${gx}px`;
+  }
+  if (gy == null) g.h.hidden = true;
+  else {
+    g.h.hidden = false;
+    g.h.style.top = `${gy}px`;
+  }
+}
+function hideGuides() {
+  const g = ensureGuides();
+  g.v.hidden = true;
+  g.h.hidden = true;
+}
+
+/** 其它卡片与收纳面板的参考线 */
+function refLines(exceptId) {
+  const xs = [];
+  const ys = [];
+  for (const o of S.cfg.widgets) {
+    if (o.id === exceptId) continue;
+    xs.push(o.x, o.x + o.w / 2, o.x + o.w);
+    ys.push(o.y, o.y + o.h / 2, o.y + o.h);
+  }
+  const org = S.cfg.organizer;
+  if (org) {
+    xs.push(org.x, org.x + org.w / 2, org.x + org.w);
+    ys.push(org.y);
+  }
+  return { xs, ys };
+}
+
+/** 起点吸附：card 的左/中/右 三条线各自去贴，取最近的一处 */
+function snapStart(pos, size, lines) {
+  let best = null;
+  for (const off of [0, size / 2, size]) {
+    const at = pos + off;
+    for (const l of lines) {
+      const d = Math.abs(at - l);
+      if (d <= SNAP_TOL && (!best || d < best.d)) best = { d, pos: l - off, line: l };
+    }
+  }
+  return best;
+}
+
+/** 终点吸附：card 的右/下 边去贴（改大小时用） */
+function snapEnd(pos, size, lines) {
+  let best = null;
+  const at = pos + size;
+  for (const l of lines) {
+    const d = Math.abs(at - l);
+    if (d <= SNAP_TOL && (!best || d < best.d)) best = { d, size: l - pos, line: l };
+  }
+  return best;
+}
+
+const onGrid = (v) => Math.round(v / GRID) * GRID;
 
 function startDrag(e, el, w, mode) {
   e.preventDefault();
@@ -216,12 +314,24 @@ function startDrag(e, el, w, mode) {
   const onMove = (ev) => {
     const dx = (ev.clientX - sx) / S.scale;
     const dy = (ev.clientY - sy) / S.scale;
+    const { xs, ys } = refLines(w.id);
+
     if (mode === 'move') {
-      w.x = Math.round(clamp(origin.x + dx, 0, S.design.w - w.w));
-      w.y = Math.round(clamp(origin.y + dy, 0, S.design.h - w.h));
+      const nx = clamp(origin.x + dx, 0, S.design.w - w.w);
+      const ny = clamp(origin.y + dy, 0, S.design.h - w.h);
+      const hitX = snapStart(nx, w.w, xs);
+      const hitY = snapStart(ny, w.h, ys);
+      w.x = Math.round(hitX ? clamp(hitX.pos, 0, S.design.w - w.w) : onGrid(nx));
+      w.y = Math.round(hitY ? clamp(hitY.pos, 0, S.design.h - w.h) : onGrid(ny));
+      showGuides(hitX?.line ?? null, hitY?.line ?? null);
     } else {
-      w.w = Math.round(clamp(origin.w + dx, min[0], S.design.w - w.x));
-      w.h = Math.round(clamp(origin.h + dy, min[1], S.design.h - w.y));
+      const nw = clamp(origin.w + dx, min[0], S.design.w - w.x);
+      const nh = clamp(origin.h + dy, min[1], S.design.h - w.y);
+      const hitX = snapEnd(w.x, nw, xs);
+      const hitY = snapEnd(w.y, nh, ys);
+      w.w = Math.round(clamp(hitX ? hitX.size : onGrid(nw), min[0], S.design.w - w.x));
+      w.h = Math.round(clamp(hitY ? hitY.size : onGrid(nh), min[1], S.design.h - w.y));
+      showGuides(hitX?.line ?? null, hitY?.line ?? null);
     }
     place(el, w);
     scheduleTone();
@@ -231,6 +341,7 @@ function startDrag(e, el, w, mode) {
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     S.force = false;
+    hideGuides();
     S.mounted.get(w.id)?.inst?.onSizeChange?.();
     save();
     updateHit();
@@ -332,6 +443,50 @@ const handlers = {
     await invoke('create_group', { name });
     await refreshDesktop();
   },
+  /** 分组自身的右键菜单：改名、调顺序、打开目录、删除 */
+  groupMenu: (e, gid) => {
+    const groups = S.cfg.organizer.groups;
+    const i = groups.findIndex((g) => g.id === gid);
+    if (i < 0) return;
+    const g = groups[i];
+
+    showMenu({ x: e.clientX, y: e.clientY }, [
+      { label: g.name, head: true },
+      {
+        label: '重命名…',
+        act: async () => {
+          const name = await promptInput('重命名分组', '新的分组名', g.name);
+          if (!name || name === g.name) return;
+          try {
+            await invoke('rename_group', { id: gid, name });
+            await refreshDesktop();
+            toast(`已改名为「${name}」`);
+          } catch (err) {
+            toast(`重命名失败：${err?.message || err}`);
+          }
+        }
+      },
+      { label: '上移', disabled: i === 0, act: () => moveGroup(i, -1) },
+      { label: '下移', disabled: i >= groups.length - 1, act: () => moveGroup(i, 1) },
+      { sep: true },
+      {
+        label: '在资源管理器中打开',
+        act: () => {
+          const folder = S.view?.groups?.find((x) => x.id === gid)?.folder;
+          if (folder) invoke('open_path', { path: folder });
+        }
+      },
+      { sep: true },
+      {
+        label: '删除分组（内容移回桌面）',
+        act: async () => {
+          const n = await invoke('delete_group', { id: gid });
+          await refreshDesktop();
+          toast(n ? `已移出 ${n} 项并删除分组` : '分组已删除');
+        }
+      }
+    ]);
+  },
   openRoot: () => invoke('open_root'),
   refresh: async () => {
     await invoke('desktop_icons', { paths: [] }).catch(() => {});
@@ -390,6 +545,16 @@ const handlers = {
   },
   rerender: () => renderPanel()
 };
+
+function moveGroup(i, delta) {
+  const arr = S.cfg.organizer.groups;
+  const j = i + delta;
+  if (j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  renderPanel();
+  save();
+  toast('分组顺序已调整');
+}
 
 function attachPanelChrome(el) {
   if (el.querySelector('.grip')) return;
@@ -634,36 +799,145 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-/* ---- 输入框（Tauri 里没有 window.prompt） ---- */
-function promptInput(title, placeholder) {
+/* ---- 弹层 ----
+ *
+ * 窗口平时是「按热区穿透」的：只有卡片和面板所在矩形接收鼠标，其余位置直接
+ * 交给桌面。弹层挂到页面中央，那块区域不在任何热区里，所以鼠标一点就穿到
+ * 桌面上去了——表现就是「输入框还在，但再也打不了字」。
+ * 因此弹层打开期间必须把 force 打开，让整窗接管鼠标，关闭时再还原。
+ */
+function modal(title, bodyHtml, opts = {}) {
   return new Promise((resolve) => {
+    const wasForce = S.force;
+    S.force = true;
+    updateHit();
+
     const wrap = document.createElement('div');
-    wrap.style.cssText =
-      'position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:rgba(28,20,15,.32)';
+    wrap.className = 'modal';
     wrap.innerHTML = `
-      <div style="width:300px;background:#fffcf8;border-radius:16px;padding:16px;box-shadow:0 30px 60px -30px rgba(40,25,15,.8)">
-        <div style="font-size:12.5px;font-weight:650;margin-bottom:10px">${escapeHtml(title)}</div>
-        <input id="_pi" placeholder="${escapeHtml(placeholder || '')}"
-          style="width:100%;height:32px;border-radius:9px;border:1px solid rgba(120,90,70,.2);padding:0 10px;font-size:12px;font-family:inherit;outline:0" />
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-          <button id="_pc" class="ebtn">取消</button>
-          <button id="_po" class="ebtn primary">确定</button>
+      <div class="modal-card">
+        <div class="modal-title">${escapeHtml(title)}</div>
+        ${bodyHtml}
+        <div class="modal-foot">
+          <button class="ebtn" data-close>${escapeHtml(opts.cancelText || '取消')}</button>
+          ${opts.okText ? `<button class="ebtn primary" data-ok>${escapeHtml(opts.okText)}</button>` : ''}
         </div>
       </div>`;
     document.body.appendChild(wrap);
-    const input = wrap.querySelector('#_pi');
-    input.focus();
-    const done = (v) => {
+
+    const close = (v) => {
       wrap.remove();
+      S.force = wasForce;
+      updateHit();
       resolve(v);
     };
-    wrap.querySelector('#_pc').onclick = () => done(null);
-    wrap.querySelector('#_po').onclick = () => done(input.value.trim() || null);
-    input.onkeydown = (e) => {
-      if (e.key === 'Enter') done(input.value.trim() || null);
-      if (e.key === 'Escape') done(null);
-    };
+
+    // 点遮罩不关闭、也不让焦点跑掉：想取消就按「取消」或 Esc
+    wrap.addEventListener('mousedown', (e) => {
+      if (e.target === wrap) {
+        e.preventDefault();
+        wrap.querySelector('input,textarea')?.focus();
+      }
+    });
+    wrap.querySelector('[data-close]').onclick = () => close(null);
+    wrap.querySelector('[data-ok]')?.addEventListener('click', () => close(opts.onOk?.(wrap) ?? null));
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close(null);
+    });
+
+    opts.mount?.(wrap, close);
   });
+}
+
+/* ---- 输入框（Tauri 里没有 window.prompt） ---- */
+function promptInput(title, placeholder, value = '') {
+  return modal(
+    title,
+    `<input class="modal-input" placeholder="${escapeHtml(placeholder || '')}" value="${escapeHtml(value)}" />`,
+    {
+      okText: '确定',
+      onOk: (wrap) => wrap.querySelector('.modal-input').value.trim() || null,
+      mount: (wrap, close) => {
+        const input = wrap.querySelector('.modal-input');
+        input.focus();
+        input.select();
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') close(input.value.trim() || null);
+        });
+      }
+    }
+  );
+}
+
+/* ---- 天气地区选择：支持省 / 市 / 区县 ---- */
+function pickPlace() {
+  return modal(
+    '设置天气地区',
+    `<div class="modal-hint">支持省 / 市 / 区县，如「西湖区」。回车搜索。</div>
+     <div class="modal-row">
+       <input class="modal-input" placeholder="输入地名" value="${escapeHtml(S.cfg.weather?.city || '')}" />
+       <button class="ebtn primary" data-search>搜索</button>
+     </div>
+     <div class="place-list" hidden></div>`,
+    {
+      okText: '',
+      mount: (wrap, close) => {
+        const input = wrap.querySelector('.modal-input');
+        const list = wrap.querySelector('.place-list');
+
+        const search = async () => {
+          const q = input.value.trim();
+          if (!q) return;
+          list.hidden = false;
+          list.innerHTML = `<div class="place-tip">搜索中…</div>`;
+          let rows = [];
+          try {
+            rows = await invoke('geo_search', { q });
+          } catch (err) {
+            list.innerHTML = `<div class="place-tip">搜索失败：${escapeHtml(String(err?.message || err))}</div>`;
+            return;
+          }
+          if (!rows.length) {
+            list.innerHTML = `<div class="place-tip">没找到「${escapeHtml(q)}」。试试只留区县名，如「西湖区」</div>`;
+            return;
+          }
+          list.innerHTML = rows
+            .map(
+              (p, i) => `<button class="place-item" data-i="${i}">
+                <b>${escapeHtml(p.name)}</b><span>${escapeHtml(p.label)}</span></button>`
+            )
+            .join('');
+          list.querySelectorAll('.place-item').forEach((btn) => {
+            btn.onclick = async () => {
+              const p = rows[Number(btn.dataset.i)];
+              close(null);
+              try {
+                await invoke('set_weather_place', {
+                  label: p.label,
+                  name: p.name,
+                  lat: p.lat,
+                  lon: p.lon
+                });
+                toast(`天气地区已改为「${p.name}」`);
+              } catch (err) {
+                toast(`设置失败：${err?.message || err}`);
+              }
+            };
+          });
+        };
+
+        input.focus();
+        input.select();
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            search();
+          }
+        });
+        wrap.querySelector('[data-search]').onclick = search;
+      }
+    }
+  );
 }
 
 let toastTimer = 0;
@@ -736,16 +1010,20 @@ function bindGlobalEvents() {
   listen('tray:action', (e) => {
     if (e.payload === 'gallery') openGal();
     if (e.payload === 'edit') setEdit(!S.edit);
+    if (e.payload === 'place') pickPlace();
     if (e.payload === 'glass') {
       toneImage = null;
       loadGlass();
     }
   });
 
-  // 托盘切换「时钟显示秒」：改全局开关后手动 tick 一次，不必重建卡片
-  listen('clock:seconds', (on) => {
-    S.cfg.show_seconds = !!on;
-    setShowSeconds(S.cfg.show_seconds);
+  // 托盘切换「时钟显示秒」：改全局开关后手动 tick 一次，不必重建卡片。
+  // 注意回调拿到的是事件对象，开关值在 payload 里——直接 `!!on` 会永远是 true，
+  // 这正是「关掉了却还在显示秒」的原因。
+  listen('clock:seconds', (e) => {
+    const on = !!e.payload;
+    S.cfg.show_seconds = on;
+    setShowSeconds(on);
     for (const inst of S.mounted.values()) inst?.tick?.();
   });
 

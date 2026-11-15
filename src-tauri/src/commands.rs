@@ -17,6 +17,8 @@ pub struct Boot {
     pub autostart: bool,
     /// 本次是否自检截图模式（截图时要等数据齐了再拍）
     pub shot: bool,
+    /// 调试：启动后自动打开某个弹层（FY_UI=place|group），配合截图核对用
+    pub uitest: String,
 }
 
 #[tauri::command]
@@ -35,6 +37,7 @@ pub fn boot(state: State<'_, AppState>) -> Boot {
         version: env!("CARGO_PKG_VERSION").into(),
         autostart,
         shot: std::env::var("FY_SHOT").is_ok(),
+        uitest: std::env::var("FY_UI").unwrap_or_default(),
     }
 }
 
@@ -285,6 +288,43 @@ pub fn set_autostart(on: bool) -> Result<bool, String> {
 pub fn weather_now(state: State<'_, AppState>) -> Option<Weather> {
     let _ = state;
     weather::latest()
+}
+
+/// 地名搜索：中文区县级也能命中（走 photon / OSM）
+#[tauri::command]
+pub async fn geo_search(q: String) -> Result<Vec<crate::geo::Place>, String> {
+    crate::geo::search(&q).await
+}
+
+/// 换天气地区。写完立刻重拉一次，不用等 15 分钟的轮询周期。
+#[tauri::command]
+pub fn set_weather_place(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    label: String,
+    name: String,
+    lat: f64,
+    lon: f64,
+) -> Result<(), String> {
+    if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+        return Err("经纬度超出范围".into());
+    }
+    state.with_config(|c| {
+        c.weather.lat = lat;
+        c.weather.lon = lon;
+        c.weather.city = name.clone();
+        c.weather.admin = label.clone();
+    });
+    let cfg = state.config();
+    tauri::async_runtime::spawn(async move {
+        if let Some(w) = weather::fetch(&cfg).await {
+            weather::store(&w);
+            let _ = app.emit("weather", &w);
+        } else {
+            let _ = app.emit("weather:error", ());
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]

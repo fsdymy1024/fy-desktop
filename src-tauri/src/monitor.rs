@@ -39,6 +39,8 @@ pub struct Metrics {
     pub up: f64,
     pub latency: u32,
     pub ip: String,
+    /// IP 所属网卡名（如「WLAN」「以太网」），让「这是哪块网卡的地址」一眼可见
+    pub iface: String,
     pub link: Link,
     pub down_history: Vec<u64>,
 }
@@ -153,21 +155,68 @@ fn total_bytes(nets: &Networks) -> (u64, u64) {
     (rx, tx)
 }
 
-fn local_ip(nets: &Networks) -> String {
-    for (_, data) in nets.iter() {
+/// 出口网卡 IP。
+///
+/// 旧实现是「遍历所有网卡，取第一个非回环 IPv4」，但网卡顺序不等于路由顺序：
+/// 装了 VMware / Hyper-V / WSL / VirtualBox 的机器上经常先返回虚拟网卡，
+/// 卡片上就会显示一个根本不通外网的地址。
+///
+/// 这里改成让内核自己回答：对公网地址做一次 UDP `connect`（不发送任何数据包），
+/// 路由表选定出口网卡后，`local_addr()` 就是那块网卡的地址。
+fn egress_ip() -> Option<std::net::Ipv4Addr> {
+    use std::net::UdpSocket;
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    // connect 对 UDP 只是记录对端，不产生流量
+    sock.connect("223.5.5.5:80").ok()?;
+    match sock.local_addr().ok()?.ip() {
+        IpAddr::V4(v4) if !v4.is_loopback() && !v4.is_link_local() => Some(v4),
+        _ => None,
+    }
+}
+
+/// 虚拟网卡：兜底扫描时要跳过，否则又会挑到它们
+const VIRTUAL_HINTS: &[&str] = &[
+    "vmware", "virtualbox", "vethernet", "hyper-v", "loopback", "tap-", "tun", "wsl",
+    "docker", "npcap", "bluetooth",
+];
+
+fn looks_virtual(name: &str) -> bool {
+    let n = name.to_lowercase();
+    VIRTUAL_HINTS.iter().any(|h| n.contains(h))
+}
+
+/// 返回 (IP, 网卡名)
+fn net_identity(nets: &Networks) -> (String, String) {
+    if let Some(v4) = egress_ip() {
+        let ip = v4.to_string();
+        for (name, data) in nets.iter() {
+            if data.ip_networks().iter().any(|n| n.addr.to_string() == ip) {
+                return (ip, name.to_string_lossy().to_string());
+            }
+        }
+        return (ip, String::new());
+    }
+    scan_ip(nets)
+}
+
+/// 兜底：路由查询失败时（极少见）扫网卡，但跳过虚拟适配器
+fn scan_ip(nets: &Networks) -> (String, String) {
+    let mut fallback: Option<(String, String)> = None;
+    for (name, data) in nets.iter() {
         for ipn in data.ip_networks() {
-            let addr = ipn.addr;
-            match addr {
-                IpAddr::V4(v4) => {
-                    if !v4.is_loopback() && !v4.is_link_local() {
-                        return v4.to_string();
-                    }
+            if let IpAddr::V4(v4) = ipn.addr {
+                if v4.is_loopback() || v4.is_link_local() {
+                    continue;
                 }
-                IpAddr::V6(_) => {}
+                let hit = (v4.to_string(), name.to_string_lossy().to_string());
+                if !looks_virtual(&name.to_string_lossy()) {
+                    return hit;
+                }
+                fallback.get_or_insert(hit);
             }
         }
     }
-    String::new()
+    fallback.unwrap_or_default()
 }
 
 fn disk_usage(disks: &Disks) -> f32 {
@@ -192,6 +241,14 @@ fn disk_usage(disks: &Disks) -> f32 {
         return 0.0;
     }
     (((total - avail) as f64 / total as f64) * 100.0) as f32
+}
+
+/// 自检/诊断用：单独探一次出口网卡身份
+pub fn egress_probe() -> (String, String) {
+    match Networks::new_with_refreshed_list() {
+        Ok(nets) => net_identity(&nets),
+        Err(_) => (String::new(), String::new()),
+    }
 }
 
 pub fn spawn(app: AppHandle) {
@@ -257,6 +314,7 @@ pub fn spawn(app: AppHandle) {
             }
 
             let total_mem = sys.total_memory().max(1);
+            let (ip, iface) = net_identity(&nets);
             let metrics = Metrics {
                 cpu: sys.global_cpu_usage().clamp(0.0, 100.0),
                 mem: (sys.used_memory() as f64 / total_mem as f64 * 100.0) as f32,
@@ -266,15 +324,16 @@ pub fn spawn(app: AppHandle) {
                 down: smooth_down,
                 up: smooth_up,
                 latency: LATENCY.load(Ordering::Relaxed),
-                ip: local_ip(&nets),
+                ip,
+                iface,
                 link: wifi_link(),
                 down_history: history.iter().copied().collect(),
             };
 
             if tick == 1 {
                 eprintln!(
-                    "[monitor] 首帧 cpu={:.1} mem={:.1} disk={:.1} down={:.0}",
-                    metrics.cpu, metrics.mem, metrics.disk, metrics.down
+                    "[monitor] 首帧 cpu={:.1} mem={:.1} disk={:.1} down={:.0} ip={} iface={}",
+                    metrics.cpu, metrics.mem, metrics.disk, metrics.down, metrics.ip, metrics.iface
                 );
             }
             if let Err(e) = app.emit("metrics", &metrics) {
