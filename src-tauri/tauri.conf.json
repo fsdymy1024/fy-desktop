@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "fy-desktop",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "identifier": "com.fy.desktop",
   "build": {
     "frontendDist": "../src/renderer"
@@ -43,9 +43,16 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "icons/icon.ico": "fy-desktop.ico"
+    },
     "shortDescription": "桌面玻璃小组件与快捷方式收纳",
     "longDescription": "fy-desktop 把天气、时钟、日历、系统监视、网络等小组件放回桌面，并用玻璃收纳格子管理桌面快捷方式。",
     "windows": {
+      "signCommand": {
+        "cmd": "powershell",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/sign.ps1", "%1"]
+      },
       "nsis": {
         "installMode": "currentUser",
         "languages": [
@@ -54,7 +61,8 @@
         ],
         "displayLanguageSelector": false,
         "compression": "lzma",
-        "installerIcon": "icons/icon.ico"
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "nsis/hooks.nsh"
       }
     }
   }

@@ -9,6 +9,7 @@ import { invoke, listen, dbg } from './bridge.js';
 import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf } from './widgets.js';
 import { renderOrganizer, groupAtPoint, resetLoose } from './organizer.js';
 import { openGallery } from './gallery.js';
+import { openAbout, updateHint } from './about.js';
 import { clamp } from './util.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -23,6 +24,8 @@ const S = {
   force: false,
   mounted: new Map(),
   gallery: null,
+  about: null,
+  version: '',
   shotMode: false
 };
 
@@ -41,6 +44,7 @@ async function boot() {
   S.cfg = b.config;
   S.design = { w: b.design[0], h: b.design[1] };
   S.scale = b.scale || 1;
+  S.version = b.version || '';
   S.shotMode = !!b.shot;
 
   layoutStage();
@@ -99,6 +103,23 @@ async function boot() {
         () => document.querySelector('#gallery .gcard[data-kind="weather"][data-size="s"]')?.click(),
         700
       );
+    }, 500);
+  // FY_UI=galmat：打开组件库点一下「玻璃」，验证材质真的落到了底层卡片上
+  if (b.uitest === 'galmat')
+    setTimeout(() => {
+      openGal();
+      setTimeout(
+        () => document.querySelector('#gallery .matbtn[data-mat="glass"]')?.click(),
+        800
+      );
+    }, 500);
+  // FY_UI=about：打开关于面板（截图核对面板本身，以及没有仓库时的报错文案）
+  if (b.uitest === 'about') setTimeout(() => openAboutPanel(), 500);
+  // FY_UI=aboutcheck：打开关于并点一次「检查更新」，验证 GitHub 那条链路
+  if (b.uitest === 'aboutcheck')
+    setTimeout(() => {
+      openAboutPanel();
+      setTimeout(() => document.querySelector('#about [data-act="check"]')?.click(), 600);
     }, 500);
   if (b.uitest === 'menu') setTimeout(() => openFirstCardMenu(), 500);
   if (b.uitest === 'menusize')
@@ -263,7 +284,6 @@ function renderWidgets() {
   }
   paintShotVars();
   scheduleHit();
-  scheduleTone();
 }
 
 function bindCard(el, w) {
@@ -339,7 +359,6 @@ function setCardSize(el, w, size) {
   S.mounted.get(w.id)?.inst?.onSizeChange?.();
   save();
   scheduleHit();
-  scheduleTone();
   toast(`「${REGISTRY[w.kind]?.name || w.kind}」已切到${SIZE_LABEL[size]}号`);
 }
 
@@ -443,7 +462,6 @@ function startDrag(e, el, w) {
     w.y = Math.round(hitY ? clamp(hitY.pos, 0, S.design.h - w.h) : onGrid(ny));
     showGuides(hitX?.line ?? null, hitY?.line ?? null);
     place(el, w);
-    scheduleTone();
   };
 
   const onUp = () => {
@@ -453,7 +471,6 @@ function startDrag(e, el, w) {
     hideGuides();
     save();
     updateHit();
-    scheduleTone();
   };
 
   window.addEventListener('pointermove', onMove);
@@ -534,7 +551,6 @@ function renderPanel() {
   attachPanelChrome(el);
   paintShotVars();
   scheduleHit();
-  scheduleTone();
 }
 
 /** 打开类动作失败必须说话。
@@ -726,7 +742,6 @@ function attachPanelChrome(el) {
       el.style.top = `${o.y}px`;
       el.style.setProperty('--shot-x', `${-o.x}px`);
       el.style.setProperty('--shot-y', `${-o.y}px`);
-      scheduleTone();
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
@@ -755,60 +770,18 @@ async function loadGlass() {
   }
   try {
     S.shot = await invoke('glass_snapshot');
+    S.glassErr = '';
     paintShotVars();
-    toneImage = null;
-    scheduleTone();
   } catch (e) {
+    S.glassErr = String(e?.message || e);
     console.warn('[fy] 抓屏失败，退回半透明填充', e);
     document.body.dataset.glass = '0';
   }
 }
 
-/* ---- 自适应明暗：采样底图，卡片下面偏暗就换浅色字 ---- */
-let toneImage = null;
-let tonePending = false;
-
-function scheduleTone() {
-  if (tonePending) return;
-  tonePending = true;
-  setTimeout(() => {
-    tonePending = false;
-    sampleTone();
-  }, 220);
-}
-
-function sampleTone() {
-  if (!S.shot) return;
-  if (!toneImage) {
-    toneImage = new Image();
-    toneImage.src = S.shot;
-    toneImage.onload = () => sampleTone();
-    return;
-  }
-  if (!toneImage.complete || !toneImage.naturalWidth) return;
-
-  const CW = 180;
-  const CH = Math.max(1, Math.round((CW * S.design.h) / S.design.w));
-  const cv = document.createElement('canvas');
-  cv.width = CW;
-  cv.height = CH;
-  const ctx = cv.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(toneImage, 0, 0, CW, CH);
-
-  // 统一按整屏平均明暗决定色调：逐卡片判断会让同一块面板里出现明暗两套玻璃，
-  // 视觉上拼不起来，宁可整体统一。
-  const data = ctx.getImageData(0, 0, CW, CH).data;
-  let sum = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    sum += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
-  }
-  const avg = sum / (data.length / 4) / 255;
-  const tone = avg < 0.52 ? 'dark' : 'light';
-  if (document.body.dataset.tone !== tone) {
-    document.body.dataset.tone = tone;
-  }
-  document.querySelectorAll('#stage .surface').forEach((el) => el.classList.remove('on-dark'));
-}
+/* 这里原来还有一套「采样底图 → 底图暗就把卡片翻成深色」的逻辑。
+   它和材质选择器打架：选了玻璃，壁纸一暗就自动变成石墨色，用户以为没生效。
+   现在材质只听用户的，采样代码删掉，只留 .surface.on-dark 这个钩子备用。 */
 
 /* ============================ 交互基础设施 ============================ */
 
@@ -837,7 +810,7 @@ function updateHit() {
   const menu = $('#menu');
   if (menu && !menu.hidden) push(menu);
 
-  const force = S.edit || S.force || !!S.gallery || (menu && !menu.hidden);
+  const force = S.edit || S.force || !!S.gallery || !!S.about || (menu && !menu.hidden);
   invoke('set_hit_regions', { rects, force: !!force }).catch(() => {});
 }
 
@@ -868,10 +841,29 @@ function openGal() {
       Object.assign(S.cfg, patch);
       applyMaterial();
       save();
+      // 切到玻璃/暮色都要重抓底图：不重抓的话，之前从石墨切过来的那次
+      // 手上根本没有壁纸，玻璃会退化成一块不透的白板。
       if (S.cfg.material === 'solid') document.body.dataset.glass = '0';
-      else if (!S.shot) loadGlass();
-      else document.body.dataset.glass = '1';
-      scheduleTone();
+      else loadGlass();
+    }
+  });
+  updateHit();
+}
+
+/* ---- 关于 ---- */
+function openAboutPanel() {
+  if (S.about) return;
+  S.about = openAbout($('#about'), {
+    version: S.version,
+    cfg: S.cfg,
+    onClose: () => {
+      S.about = null;
+      updateHit();
+    },
+    onAutoUpdate: (on) => {
+      S.cfg.auto_update = on;
+      save();
+      toast(on ? '已开启自动更新检查' : '已关闭自动更新检查');
     }
   });
   updateHit();
@@ -1080,6 +1072,7 @@ function bindGlobalEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (S.about) return S.about.close();
       if (S.gallery) return S.gallery.close();
       if (!$('#menu').hidden) return hideMenu();
       if (S.edit) setEdit(false);
@@ -1099,7 +1092,6 @@ function bindGlobalEvents() {
   window.addEventListener('resize', () => {
     layoutStage();
     updateHit();
-    scheduleTone();
   });
 
   // 后端数据
@@ -1118,21 +1110,24 @@ function bindGlobalEvents() {
 
   listen('desktop:changed', () => refreshDesktop());
 
-  // 干净截图时后端会重抓一张不含其它窗口的底图，这里换掉并重新判明暗
+  // 启动时后台检查到新版本：只提示一句，不弹窗抢焦点
+  listen('update:available', (e) => {
+    if (e.payload?.has_update) toast(updateHint(e.payload));
+  });
+
+  // 干净截图时后端会重抓一张不含其它窗口的底图，这里直接换掉
   listen('glass:update', (e) => {
     if (!e.payload) return;
     S.shot = e.payload;
-    toneImage = null;
     paintShotVars();
-    scheduleTone();
   });
 
   listen('tray:action', (e) => {
     if (e.payload === 'gallery') openGal();
+    if (e.payload === 'about') openAboutPanel();
     if (e.payload === 'edit') setEdit(!S.edit);
     if (e.payload === 'place') pickPlace();
     if (e.payload === 'glass') {
-      toneImage = null;
       loadGlass();
     }
   });
@@ -1212,6 +1207,18 @@ function dumpLayout() {
         return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
       })(),
       glass: document.body.dataset.glass === '1',
+      // 材质的三个来源必须一致：DOM 属性（CSS 用）、内存配置、磁盘配置
+      mat: {
+        attr: document.body.dataset.material,
+        cfg: S.cfg.material,
+        tone: document.body.dataset.tone || '',
+        shot: !!S.shot,
+        glassErr: S.glassErr || '',
+        fill: (() => {
+          const s = document.querySelector('#stage .surface');
+          return s ? getComputedStyle(s).backgroundColor : '';
+        })()
+      },
       // 日历卡与时钟卡在最小尺寸下的内部盒子：核对内容是「刚好塞下」还是「溢出被裁」
       probe: (() => {
         const out = {};

@@ -525,6 +525,44 @@ pub fn open_path(path: &str) -> Result<(), String> {
     Err("仅支持 Windows".into())
 }
 
+/// 用默认浏览器打开一个链接（只放行 http/https）。
+///
+/// 不能复用 open_path：那条路是「开资源管理器窗口」，喂给它一个 URL 会拿
+/// explorer 去打开，行为不可控；这里直接交给 ShellExecute 的协议关联处理。
+pub fn open_url(url: &str) -> Result<(), String> {
+    let low = url.trim().to_ascii_lowercase();
+    if !(low.starts_with("https://") || low.starts_with("http://")) {
+        return Err(format!("只允许打开 http/https 链接：{url}"));
+    }
+    #[cfg(windows)]
+    {
+        use windows::core::{HSTRING, PCWSTR};
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let op = HSTRING::from("open");
+        let file = HSTRING::from(url);
+        let code = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(op.as_ptr()),
+                PCWSTR(file.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        }
+        .0 as isize;
+        log_launch(&format!("url {url} → {code}"));
+        if code > 32 {
+            return Ok(());
+        }
+        return Err(format!("浏览器没有打开（ShellExecute {code}）"));
+    }
+    #[cfg(not(windows))]
+    Err("仅支持 Windows".into())
+}
+
 pub fn reveal_path(path: &str) -> Result<(), String> {
     #[cfg(windows)]
     {

@@ -14,6 +14,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let secs = CheckMenuItem::with_id(app, "seconds", "时钟显示秒", true, true, None::<&str>)?;
     let root = MenuItem::with_id(app, "root", "打开收纳文件夹", true, None::<&str>)?;
     let conf = MenuItem::with_id(app, "conf", "设置文件…", true, None::<&str>)?;
+    // 「关于」放最后一段：版本号和更新是低频操作，不占上面那一段常用区
+    let about = MenuItem::with_id(app, "about", "关于 fy-desktop…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 fy-desktop", true, None::<&str>)?;
 
     let menu = Menu::with_items(
@@ -28,6 +30,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &root,
             &conf,
             &PredefinedMenuItem::separator(app)?,
+            &about,
             &quit,
         ],
     )?;
@@ -88,6 +91,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 {
                     eprintln!("[tray] 打开配置目录失败：{e}");
                 }
+            }
+            "about" => {
+                let _ = app.emit("tray:action", "about");
             }
             "quit" => app.exit(0),
             _ => {}

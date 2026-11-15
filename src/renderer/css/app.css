@@ -20,8 +20,13 @@
   --ink3: rgba(26, 22, 19, 0.40);
   --line: rgba(120, 90, 70, 0.12);
 
-  --fill: rgba(255, 253, 250, 0.86);
-  --fill-2: rgba(255, 253, 250, 0.94);
+  /* 玻璃：0.62 的白膜压在模糊底图上——再厚一点就看不到壁纸、
+     变成一张白纸（也就是上一轮「原色刺眼」的老毛病）；
+     要更实、不刺眼就选石墨。 */
+  --fill: rgba(255, 253, 250, 0.62);
+  --fill-2: rgba(255, 253, 250, 0.8);
+  /* 铺在模糊底图之上的那层膜。玻璃 = 白膜，底图再暗卡片也是浅的 */
+  --veil: rgba(255, 253, 250, 0.58);
   --stroke: rgba(255, 255, 255, 0.52);
   --accent: #e2622c;
 
@@ -80,16 +85,20 @@ button {
   isolation: isolate;
 }
 
-/* 真实桌面底图：后端模糊过的整屏截图，按卡片坐标裁切 */
+/* 真实桌面底图：后端模糊过的整屏截图，按卡片坐标裁切。
+   白膜必须画在这一层的最上面（background-image 的第一层），不能靠 .surface 的
+   background——元素的背景永远在伪元素之下，底图一铺就把白膜盖死了。
+   以前就是这么写的：玻璃开起来等于直接把壁纸贴在卡片上，材质只剩边框差别，
+   文字还是深色，在深色壁纸上根本看不清。 */
 .surface::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
-  background-image: var(--shot, none);
-  background-size: var(--shot-w, 0) var(--shot-h, 0);
-  background-position: var(--shot-x, 0) var(--shot-y, 0);
-  background-repeat: no-repeat;
+  background-image: linear-gradient(var(--veil), var(--veil)), var(--shot, none);
+  background-size: 100% 100%, var(--shot-w, 0) var(--shot-h, 0);
+  background-position: 0 0, var(--shot-x, 0) var(--shot-y, 0);
+  background-repeat: no-repeat, no-repeat;
   opacity: 0;
   transition: opacity 0.45s ease;
 }
@@ -1692,6 +1701,8 @@ body[data-material="dusk"] {
   --line: rgba(255, 255, 255, 0.10);
   --fill: rgba(24, 18, 14, 0.62);
   --fill-2: rgba(24, 18, 14, 0.76);
+  /* 暮色 = 深色膜压在底图上，字才是浅的 */
+  --veil: rgba(18, 13, 10, 0.56);
   --stroke: rgba(255, 255, 255, 0.14);
   --shadow: 0 22px 46px -26px rgba(0, 0, 0, 0.8), 0 3px 8px -4px rgba(0, 0, 0, 0.4);
   /* 浮层（右键菜单 / 编辑条 / 弹层）跟着材质走：
@@ -1709,8 +1720,9 @@ body[data-material="dusk"] {
   --pop-field: rgba(255, 255, 255, 0.08);
 }
 
+/* 暮色的膜已经把底图压下去了，这里只降一点饱和度让颜色别抢字 */
 body[data-material="dusk"] .surface::before {
-  filter: brightness(0.42) saturate(0.72);
+  filter: saturate(0.7);
 }
 
 body[data-material="dusk"] .surface {
@@ -1738,59 +1750,14 @@ body[data-material="dusk"] .bar {
   background: rgba(255, 255, 255, 0.12);
 }
 
-/* 背光壁纸：底图偏暗时自动切浅色字（由 JS 采样后打标记） */
-body[data-tone="dark"]:not([data-material="dusk"]) {
-  --ink: rgba(255, 251, 246, 0.95);
-  --ink2: rgba(255, 251, 246, 0.68);
-  --ink3: rgba(255, 251, 246, 0.46);
-  --line: rgba(255, 255, 255, 0.12);
-  --fill: rgba(24, 19, 15, 0.78);
-  --fill-2: rgba(24, 19, 15, 0.88);
-  --stroke: rgba(255, 255, 255, 0.16);
-  color: var(--ink);
-}
-
-/* 深色模式用的是白字，但玻璃层铺的是真实底图——
-   底图若正好是一块白色文档，白字就没影了。压暗一点换回对比度。 */
-body[data-tone="dark"]:not([data-material="dusk"]) .surface::before,
-body[data-tone="dark"]:not([data-material="dusk"]) #organizer::before {
-  filter: brightness(0.7) saturate(0.88);
-}
-
-body[data-tone="dark"]:not([data-material="dusk"]) .cell {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-body[data-tone="dark"]:not([data-material="dusk"]) .cell:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.22);
-}
-
-body[data-tone="dark"]:not([data-material="dusk"]) .iconbtn,
-body[data-tone="dark"]:not([data-material="dusk"]) .ghost,
-body[data-tone="dark"]:not([data-material="dusk"]) .net-link {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.14);
-}
-
-body[data-tone="dark"]:not([data-material="dusk"]) .bar {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-body[data-tone="dark"]:not([data-material="dusk"]) .shelf-hint {
-  padding: 2px 3px 6px;
-  font-size: 9px;
-  color: var(--ink3);
-  letter-spacing: 0.2px;
-}
+/* 这里以前有一整套「壁纸偏暗就自动翻成深色」的规则（body[data-tone="dark"] …）：
+   采样到底图偏暗时把 --fill 换成 rgba(24,19,15,.78)、文字换白。问题是那一套
+   把「玻璃」也一起换了——玻璃本来就该是浅色雾面，翻完之后和石墨几乎一样黑，
+   用户切到玻璃看不出任何变化，等于材质选择器失效。
+   材质的身份只能由用户决定，不能交给壁纸亮度：要深色就选暮色或石墨。 */
 
 .cell.empty {
   border-color: rgba(255, 255, 255, 0.16);
-}
-
-body[data-tone="dark"]:not([data-material="dusk"]) .cell.empty .ic {
-  background: rgba(255, 255, 255, 0.04);
 }
 
 /* 石墨（原「原色」）：不铺底图，用一块实心深灰。
@@ -2044,4 +2011,293 @@ body[data-material="solid"] .cell.empty .ic {
   left: 0;
   right: 0;
   height: 1px;
+}
+
+/* ==========================================================================
+   关于 fy-desktop
+   浮层配色统一走 --pop-*（跟着材质变），不另开一套变量。
+   ========================================================================== */
+
+#about {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 15, 11, 0.42);
+}
+
+#about[hidden] {
+  display: none;
+}
+
+.ab {
+  width: 432px;
+  border-radius: 20px;
+  background: var(--pop-bg, rgba(255, 252, 248, 0.97));
+  border: 1px solid var(--pop-bd, rgba(120, 90, 70, 0.12));
+  box-shadow: 0 44px 90px -44px rgba(20, 12, 6, 0.92);
+  color: var(--pop-ink, rgba(26, 22, 19, 0.9));
+  overflow: hidden;
+}
+
+.ab-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid var(--pop-line, rgba(120, 90, 70, 0.1));
+}
+
+/* 图标：和 assets/icon.svg 同一套配色（深色圆角方 + fy） */
+.ab-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  background: linear-gradient(145deg, #3f3832 0%, #14110f 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 18px -10px rgba(0, 0, 0, 0.7);
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: #fff;
+}
+
+.ab-id h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.ab-id h2 em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--pop-ink3, rgba(26, 22, 19, 0.4));
+}
+
+.ab-id p {
+  margin: 3px 0 0;
+  font-size: 10.5px;
+  color: var(--pop-ink2, rgba(26, 22, 19, 0.55));
+}
+
+.ab-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--pop-ink2, rgba(26, 22, 19, 0.5));
+  background: var(--pop-btn, rgba(120, 90, 70, 0.09));
+  border: 1px solid transparent;
+}
+
+.ab-close:hover {
+  background: var(--pop-btn-hover, rgba(120, 90, 70, 0.16));
+  color: var(--pop-ink, rgba(26, 22, 19, 0.9));
+}
+
+.ab-body {
+  padding: 4px 18px 14px;
+}
+
+.ab-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 11px;
+  color: var(--pop-ink2, rgba(26, 22, 19, 0.6));
+}
+
+.ab-row > span {
+  width: 58px;
+  flex: 0 0 auto;
+  color: var(--pop-ink3, rgba(26, 22, 19, 0.4));
+}
+
+.ab-row > b {
+  font-weight: 600;
+  color: var(--pop-ink, rgba(26, 22, 19, 0.88));
+}
+
+.ab-row > a {
+  color: var(--pop-ink, rgba(26, 22, 19, 0.82));
+  text-decoration: none;
+  border-bottom: 1px dashed var(--pop-line, rgba(120, 90, 70, 0.24));
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ab-row > a:hover {
+  color: var(--pop-ink-hl, #b8461a);
+  border-bottom-color: currentColor;
+}
+
+.ab-sec {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--pop-line, rgba(120, 90, 70, 0.1));
+}
+
+.ab-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ab-sec-head b {
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.ab-sec-head .abbtn {
+  margin-left: auto;
+}
+
+.abbtn {
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 9px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--pop-ink, rgba(26, 22, 19, 0.86));
+  background: var(--pop-btn, rgba(120, 90, 70, 0.09));
+  border: 1px solid var(--pop-line, rgba(120, 90, 70, 0.12));
+}
+
+.abbtn:hover {
+  background: var(--pop-btn-hover, rgba(120, 90, 70, 0.16));
+}
+
+.abbtn.primary {
+  color: #fff;
+  background: #e2622c;
+  border-color: transparent;
+}
+
+.abbtn.primary:hover {
+  background: #cf5622;
+}
+
+.abbtn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 检查结果区：一句状态 + 有新版时的说明和按钮 */
+.ab-upd {
+  font-size: 10.8px;
+  line-height: 1.65;
+  color: var(--pop-ink2, rgba(26, 22, 19, 0.58));
+  min-height: 18px;
+  word-break: break-word;
+}
+
+.ab-upd .ok {
+  color: var(--pop-ink, rgba(26, 22, 19, 0.86));
+}
+
+.ab-upd .bad {
+  color: #d9534f;
+}
+
+.ab-upd .new {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--pop-ink, rgba(26, 22, 19, 0.92));
+}
+
+.ab-upd .notes {
+  display: block;
+  max-height: 84px;
+  overflow: auto;
+  margin: 4px 0 8px;
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: var(--pop-field, rgba(120, 90, 70, 0.06));
+  white-space: pre-wrap;
+  font-size: 10.2px;
+  line-height: 1.6;
+  color: var(--pop-ink2, rgba(26, 22, 19, 0.6));
+}
+
+.ab-upd .acts {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* 自动更新开关 */
+.ab-switch {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ab-switch input {
+  display: none;
+}
+
+.ab-switch i {
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  position: relative;
+  background: var(--pop-btn, rgba(120, 90, 70, 0.18));
+  transition: background 0.18s ease;
+}
+
+.ab-switch i::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  transition: transform 0.18s ease;
+}
+
+.ab-switch input:checked + i {
+  background: #e2622c;
+}
+
+.ab-switch input:checked + i::after {
+  transform: translateX(13px);
+}
+
+.ab-switch span {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.ab-switch em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--pop-ink3, rgba(26, 22, 19, 0.4));
+}
+
+.ab-foot {
+  padding: 10px 18px 13px;
+  font-size: 9.8px;
+  color: var(--pop-ink3, rgba(26, 22, 19, 0.36));
+  border-top: 1px solid var(--pop-line, rgba(120, 90, 70, 0.1));
 }

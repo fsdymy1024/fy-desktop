@@ -105,6 +105,11 @@ pub fn reveal_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    desktop::open_url(&url)
+}
+
+#[tauri::command]
 pub fn open_root(state: State<'_, AppState>) -> Result<(), String> {
     let root = desktop::root_dir(&state.config());
     if let Err(e) = std::fs::create_dir_all(&root) {
@@ -347,6 +352,38 @@ pub fn set_material(state: State<'_, AppState>, material: String) {
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
     app.exit(0);
+}
+
+/* ------------------------------- 更新 ------------------------------- */
+
+use crate::update::{self, Update};
+
+#[tauri::command]
+pub async fn check_update() -> Update {
+    update::check().await
+}
+
+/// 下载安装包。返回本地路径，前端拿到之后再问用户要不要现在装。
+#[tauri::command]
+pub async fn download_update(asset: String, version: String) -> Result<String, String> {
+    update::download(&asset, &version).await
+}
+
+/// 拉起安装程序并退出。装完由安装包自己重启（NSIS 的 run-after-install）。
+#[tauri::command]
+pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
+    update::run_installer(&path)?;
+    // 给安装程序一点时间起来，再退出，避免它抢不到文件锁
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        app.exit(0);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_auto_update(state: State<'_, AppState>, on: bool) {
+    state.with_config(|c| c.auto_update = on);
 }
 
 /// 自检时把布局坐标落盘，方便无人值守核对

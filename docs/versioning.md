@@ -150,18 +150,25 @@ FY_SELFTEST=1 src-tauri/target/release/fy-desktop.exe
 # 4. 出图，作为发布证据与文档素材
 npm run shot
 
-# 5. 出安装包（NSIS）
+# 5. 出安装包（NSIS，构建时自动给 exe 与安装包签名）
 npm run build                     # → src-tauri/target/release/bundle/nsis/*.exe
 
-# 6. 安装验证（会改注册表与开始菜单，验完记得卸载）
+# 6. 校验签名（自签证书 verify /pa 报「链未受信任」属预期，重点是签名存在）
+powershell -NoProfile -Command "Get-AuthenticodeSignature 'src-tauri/target/release/bundle/nsis/fy-desktop_0.2.0_x64-setup.exe' | Format-List Status,SignerCertificate"
+
+# 7. 安装验证（会改注册表与开始菜单，验完记得卸载）
 "src-tauri/target/release/bundle/nsis/fy-desktop_0.2.0_x64-setup.exe" /S
 "%LOCALAPPDATA%\fy-desktop\uninstall.exe" /S
 
-# 7. 提交并打标签
+# 8. 提交并打标签
 git add -A
 git commit -m "chore(release): v0.2.0"
 git tag -a v0.2.0 -m "v0.2.0：Rust 重写、真毛玻璃、真实文件夹收纳、安装包"
 git push origin main --follow-tags
+
+# 9. 发布：在 GitHub `fsdymy1024/fy-desktop` 建一个 release，
+#    标题用版本号，把安装包作为 asset 传上去——应用内的「检查更新」
+#    读的就是这个 release（api.github.com/.../releases/latest）。
 ```
 
 > **打包环境提示**：Tauri 的 NSIS 打包器会去 GitHub 取 NSIS 工具链与 `nsis_tauri_utils.dll`。

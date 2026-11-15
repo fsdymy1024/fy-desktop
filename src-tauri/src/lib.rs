@@ -12,6 +12,7 @@ pub mod geo;
 pub mod monitor;
 pub mod state;
 pub mod tray;
+pub mod update;
 pub mod weather;
 pub mod window;
 
@@ -56,6 +57,7 @@ pub fn run() {
             commands::reveal_path,
             commands::open_root,
             commands::open_config_dir,
+            commands::open_url,
             commands::move_into,
             commands::move_out,
             commands::tidy_preview,
@@ -71,6 +73,10 @@ pub fn run() {
             commands::set_weather_place,
             commands::weather_refresh,
             commands::set_material,
+            commands::check_update,
+            commands::download_update,
+            commands::install_update,
+            commands::set_auto_update,
             commands::quit_app,
             commands::dev_dump,
         ])
@@ -151,6 +157,7 @@ pub fn run() {
 
             monitor::spawn(app.handle().clone());
             weather::spawn(app.handle().clone());
+            update::spawn_auto_check(app.handle().clone());
             window::spawn_hit_guard(app.handle().clone());
 
             // 前端没在 4.5s 内就绪就强制显示窗口（配合渲染层的错误屏兜底）

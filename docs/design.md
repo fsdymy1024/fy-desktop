@@ -199,6 +199,33 @@ SVG 里的 `fy` 是文字而不是路径，依赖渲染端的字体。`tauri ico
 所以外面套了一层 `translate/scale/translate` 把墨迹框挪到正中、并缩到画布的 78%，
 否则字母会顶到圆角边缘。
 
+快捷方式**不**直接取 exe 的内嵌图标：资源管理器的图标缓存按「文件路径」记，
+exe 换了图标但路径没变，缓存命中旧图，桌面快捷方式会一直显示上一版的图标
+（v0.7.0 用户实测复现）。所以安装时额外把一份 `fy-desktop.ico` 装进
+`%LOCALAPPDATA%\fy-desktop\`，并用 NSIS 的 `NSIS_HOOK_POSTINSTALL` 钩子重建
+桌面 / 开始菜单快捷方式、把 `IconLocation` 显式指到这个 ico——缓存键跟着路径走，
+新图标立刻生效；钩子里再跑一次 `ie4uinit.exe -show`，让已打开的桌面重读图标。
+
+### 4.3.3 关于页、更新与签名
+
+托盘 →「关于 fy-desktop…」打开关于面板（浮层配色走 `--pop-*`，跟材质走）：
+版本号、更新源链接、检查更新按钮、自动更新开关（存进配置 `auto_update`）。
+
+更新链路刻意做得比 `tauri-plugin-updater` 轻：发布流程就是「打完包把
+`fy-desktop_x.y.z_x64-setup.exe` 挂到一个 GitHub release 上」，所以直接读
+`api.github.com/repos/fsdymy1024/fy-desktop/releases/latest`，从 assets 里挑
+带 `setup` 的 exe 拿直链。发现新版本只发一条 toast，不弹窗抢焦点；
+「下载并安装」= 下载到临时目录 → `/S` 静默装 → 自己退出。**不做静默替换**：
+桌面常驻程序自己换自己的 exe，装到一半失败就再也起不来。
+
+签名用 Tauri 的 `signCommand` 挂自定义签名器（`scripts/sign.ps1`）：
+signtool 不在 PATH 里（Windows SDK 只在带版本号的目录下），脚本自己找；
+证书按 `FY_SIGN_THUMBPRINT` → `scripts/sign.env.json` 的顺序取，都没有就
+**跳过签名而不是报错**——没证书的机器照样出包。当前是一枚本机生成的自签
+证书（`scripts/make-cert.ps1`），签名真实有效、文件可校验，但证书链不在
+受信任根里，Windows 仍会显示「未知发布者」；要消掉得买 OV/EV 证书，
+到时候把指纹换进 `sign.env.json` 即可，构建脚本一行不用改。
+
 ### 4.4 分组的格子系统
 
 收纳面板内部是 8 列网格，单元格 = 图标 40dp + 名称 2 行。
@@ -429,11 +456,33 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
 27. **图标里的文字不会自动视觉居中** → `text-anchor="middle"` 居中的是**字宽**，不是
     墨迹：`fy` 里 `f` 没有下降部、`y` 有，实际包围盒偏上偏左。直接写会顶到圆角边缘。
     用一次 `translate/scale/translate` 把墨迹框搬到画布正中（缩到 78%），四周留白才均匀。
+28. **伪元素会盖住元素的 background** → 玻璃卡片的白膜原来写在 `.surface` 的
+    `background: var(--fill)` 里，底图写在 `::before` 里。但定位伪元素永远画在
+    元素背景**之上**，底图一铺就把白膜整个盖死了——「玻璃」实际渲染出来的就是
+    壁纸原样，和「暮色」毫无区别，用户切材质等于没切。改法：白膜必须是
+    `::before` 自己的 `background-image` 的**第一层**（`linear-gradient(var(--veil), …), var(--shot)`），
+    多层 background 的第一层画在最上面。**「一层在元素上、一层在伪元素上」这种
+    叠层结构，永远要检查谁先画谁后画。**
+29. **自适应明暗会和材质选择器打架** → 原来有一套「采样底图，偏暗就把卡片翻成
+    深色 + 浅字」的规则（`body[data-tone="dark"]`），本意是保证可读性，但它把
+    「玻璃」也一起翻了——壁纸一暗，玻璃渲染出来就是石墨色，用户视角就是
+    「选了玻璃没生效」。材质的身份只能由用户决定，不能交给壁纸亮度：玻璃=浅色
+    雾面，要深色选暮色/石墨。整个采样链路（canvas 采样 + data-tone + CSS 覆盖）
+    直接删掉。
+30. **资源管理器的图标缓存按路径记，不认文件内容** → exe 换了图标但路径没变，
+    桌面快捷方式会一直显示旧图标（签名信息都对、exe 里也确实嵌着新图标，
+    就是不显示）。给快捷方式一个**独立的 ico 文件**当 `IconLocation`，缓存键变了，
+    新图标立刻出现；NSIS 钩子里再跑 `ie4uinit.exe -show` 兜底。
+31. **PowerShell 5.1 按 ANSI 读没有 BOM 的 .ps1** → 脚本里的中文注释全部变成
+    乱码，乱码里如果出现 `"` 就直接语法错误，脚本一行都跑不了。仓库里的
+    `.ps1` 必须存成 UTF-8 **带 BOM**；同理，给 `Get-Content` 读的 JSON 配置
+    别写中文（或统一 `-Encoding UTF8`）。另外 5.1 不支持 `?.` 这类 7 语法，
+    脚本要按 5.1 的语法写。
 
 ## 10. 后续路线
 
 | 版本 | 内容 |
 | --- | --- |
-| v0.8.0 | 格子内拖拽排序、多屏支持、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测） |
-| v0.8.0 | 备忘录可编辑、模糊强度可调 |
-| v1.0.0 | 自动更新（`tauri-plugin-updater`）、代码签名 |
+| v0.8.1 | 格子内拖拽排序、图标白底抠除（`SIIGBF_BIGGERSIZEOK` + 边缘检测） |
+| v0.9.0 | 多屏支持、备忘录可编辑、模糊强度可调 |
+| v1.0.0 | 正式代码签名证书（替换自签）、GitHub 仓库与 release 流程跑通 |

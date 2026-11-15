@@ -33,3 +33,6 @@ desktop.ini
 # Rust / Tauri 构建产物
 src-tauri/target/
 src-tauri/gen/
+
+# 签名证书指纹（本机）
+src-tauri/scripts/sign.env.json
