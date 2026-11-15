@@ -142,10 +142,10 @@ git status                        # 工作区必须干净
 npm run check:version             # package.json / Cargo.toml / tauri.conf.json
 cargo build --release --manifest-path src-tauri/Cargo.toml
 
-# 2. 无界面自检（8 项，只碰临时目录）
-FY_SELFTEST=1 src-tauri/target/release/fy-desktop.exe
+# 2. 无界面自检（9 项，只碰临时目录）
+npm run selftest
 
-# 3. 落 CHANGELOG：[Unreleased] → [0.2.0] - 2026-XX-XX
+# 3. 落 CHANGELOG：[Unreleased] → [X.Y.Z] - YYYY-MM-DD，并同步 design / requirements / README
 
 # 4. 出图，作为发布证据与文档素材
 npm run shot
@@ -154,16 +154,16 @@ npm run shot
 npm run build                     # → src-tauri/target/release/bundle/nsis/*.exe
 
 # 6. 校验签名（自签证书 verify /pa 报「链未受信任」属预期，重点是签名存在）
-powershell -NoProfile -Command "Get-AuthenticodeSignature 'src-tauri/target/release/bundle/nsis/fy-desktop_0.2.0_x64-setup.exe' | Format-List Status,SignerCertificate"
+powershell -NoProfile -Command "Get-AuthenticodeSignature 'src-tauri/target/release/bundle/nsis/fy-desktop_X.Y.Z_x64-setup.exe' | Format-List Status,SignerCertificate"
 
 # 7. 安装验证（会改注册表与开始菜单，验完记得卸载）
-"src-tauri/target/release/bundle/nsis/fy-desktop_0.2.0_x64-setup.exe" /S
+"src-tauri/target/release/bundle/nsis/fy-desktop_X.Y.Z_x64-setup.exe" /S
 "%LOCALAPPDATA%\fy-desktop\uninstall.exe" /S
 
 # 8. 提交并打标签
 git add -A
-git commit -m "chore(release): v0.2.0"
-git tag -a v0.2.0 -m "v0.2.0：Rust 重写、真毛玻璃、真实文件夹收纳、安装包"
+git commit -m "chore(release): vX.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z：本版主题一句话"
 git push origin main --follow-tags
 
 # 9. 发布：在 GitHub `fsdymy1024/fy-desktop` 建一个 release，

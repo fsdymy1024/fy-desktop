@@ -111,7 +111,9 @@ export function openGallery(host, opts) {
     }
 
     const card = e.target.closest('.gcard');
-    if (card) onAdd?.(card.dataset.kind, card.dataset.size);
+    // 把当前选中的材质一起交给添加逻辑：新卡记住这个材质，不回头改全局里
+    // 已经存在的卡片（v0.9 修正「选材质却改了所有卡」的反向联动）。
+    if (card) onAdd?.(card.dataset.kind, card.dataset.size, mat);
   };
 
   return { close };

@@ -114,6 +114,21 @@ async function boot() {
       );
     }, 500);
   // FY_UI=about：打开关于面板（截图核对面板本身，以及没有仓库时的报错文案）
+  // FY_UI=cardmats：验证组件级材质——先选暮色加一张系统卡，再选玻璃加一张天气卡，
+  // 同屏两张不同材质的卡，截图可直接对比配色是否各自独立。
+  if (b.uitest === 'cardmats')
+    setTimeout(() => {
+      openGal();
+      setTimeout(() => {
+        document.querySelector('#gallery .matbtn[data-mat="dusk"]')?.click();
+        document.querySelector('#gallery .gcard[data-kind="system"][data-size="m"]')?.click();
+      }, 700);
+      setTimeout(() => {
+        document.querySelector('#gallery .matbtn[data-mat="glass"]')?.click();
+        document.querySelector('#gallery .gcard[data-kind="weather"][data-size="s"]')?.click();
+        S.gallery?.close();
+      }, 1500);
+    }, 500);
   if (b.uitest === 'about') setTimeout(() => openAboutPanel(), 500);
   // FY_UI=aboutcheck：打开关于并点一次「检查更新」，验证 GitHub 那条链路
   if (b.uitest === 'aboutcheck')
@@ -236,6 +251,9 @@ function buildCard(w) {
   el.dataset.id = w.id;
   el.dataset.kind = w.kind;
   el.dataset.size = w.size || 'm';
+  // 每张卡自己的材质；空则跟随全局。CSS 用 [data-material] 决定这张卡的配色，
+  // 不再只看 body——这样一张暮色卡旁边可以放一张玻璃卡。
+  el.dataset.material = w.material || S.cfg.material || 'glass';
 
   const body = document.createElement('div');
   body.className = 'body';
@@ -324,6 +342,18 @@ function openCardMenu(el, w, x, y) {
     });
   }
 
+  // 材质：每张卡自己记，改一张不影响别的卡
+  items.push({ sep: true });
+  const curMat = w.material || S.cfg.material || 'glass';
+  items.push({ head: true, label: `材质 · ${{ glass: '玻璃', dusk: '暮色', solid: '石墨' }[curMat] || curMat}` });
+  for (const [k, label] of [['glass', '玻璃'], ['dusk', '暮色'], ['solid', '石墨']]) {
+    items.push({
+      label: `${k === curMat ? '✓' : '　'} ${label}`,
+      disabled: k === curMat,
+      act: () => setCardMaterial(el, w, k)
+    });
+  }
+
   items.push({ sep: true });
   items.push({ label: '调整布局…', act: () => startLayout() });
   items.push({ label: '添加组件…', act: () => openGal() });
@@ -360,6 +390,17 @@ function setCardSize(el, w, size) {
   save();
   scheduleHit();
   toast(`「${REGISTRY[w.kind]?.name || w.kind}」已切到${SIZE_LABEL[size]}号`);
+}
+
+/** 换单张卡的材质：只改这张卡，不动全局、不动别的卡 */
+function setCardMaterial(el, w, material) {
+  w.material = material;
+  el.dataset.material = material;
+  // 切成玻璃/暮色时若手上还没有底图（之前全是石墨），补抓一次
+  if (material !== 'solid' && !S.shot) loadGlass();
+  else paintShotVars();
+  save();
+  toast(`材质已换为${{ glass: '玻璃', dusk: '暮色', solid: '石墨' }[material]}`);
 }
 
 /* ---- 网格吸附 ----
@@ -477,7 +518,7 @@ function startDrag(e, el, w) {
   window.addEventListener('pointerup', onUp);
 }
 
-function addWidget(kind, size) {
+function addWidget(kind, size, material) {
   const def = REGISTRY[kind];
   if (!def) return;
   // 组件库按档位分组列出，点的是「哪个组件的哪一档」，别一律按默认档加
@@ -491,7 +532,10 @@ function addWidget(kind, size) {
     y: spot.y,
     size: want,
     w,
-    h
+    h,
+    // 组件库里选的材质只写给「这一张新卡」，不改全局——这是 v0.9 修正的联动方向。
+    // 空串表示跟随全局，老配置 / 托盘添加都走这条。
+    material: material || ''
   });
   renderWidgets();
   save();
@@ -761,11 +805,26 @@ function paintShotVars() {
   if (!S.shot) return;
   document.documentElement.style.setProperty('--shot', `url("${S.shot}")`);
   document.body.dataset.glass = '1';
+  scheduleTone();
+}
+
+/** 有没有任何 surface 需要真实壁纸底图。
+ *  全局材质决定收纳面板/弹层；卡片各有自己的材质，任一玻璃/暮色卡都要抓屏。
+ *  全是无纹理的石墨时才省掉这一次抓屏。 */
+function needsShot() {
+  if (!S.cfg.glass) return false;
+  if (S.cfg.material !== 'solid') return true; // 收纳面板跟随全局
+  return (S.cfg.widgets || []).some((w) => {
+    const m = w.material || S.cfg.material;
+    return m === 'glass' || m === 'dusk';
+  });
 }
 
 async function loadGlass() {
-  if (!S.cfg.glass || S.cfg.material === 'solid') {
+  if (!needsShot()) {
     document.body.dataset.glass = '0';
+    toneImage = null;
+    document.body.dataset.tone = '';
     return;
   }
   try {
@@ -779,9 +838,53 @@ async function loadGlass() {
   }
 }
 
-/* 这里原来还有一套「采样底图 → 底图暗就把卡片翻成深色」的逻辑。
-   它和材质选择器打架：选了玻璃，壁纸一暗就自动变成石墨色，用户以为没生效。
-   现在材质只听用户的，采样代码删掉，只留 .surface.on-dark 这个钩子备用。 */
+/* ---- 自适应明暗：采样底图，壁纸偏暗时让「玻璃」翻深色 + 浅字 ----
+   0.8 曾整套删掉，因为那时候只有全局材质，暗壁纸会把玻璃翻成石墨，
+   用户以为材质选择器坏了。v0.9 改成组件级材质后，采样只作用于玻璃卡
+   （暮色/石墨由卡片自己的 data-material 决定，不受 tone 影响），老的
+   矛盾不存在了，于是把 0.7 这套观感请回来。 */
+
+let toneImage = null;
+let tonePending = false;
+
+function scheduleTone() {
+  if (tonePending) return;
+  tonePending = true;
+  setTimeout(() => {
+    tonePending = false;
+    sampleTone();
+  }, 220);
+}
+
+function sampleTone() {
+  if (!S.shot) return;
+  if (!toneImage) {
+    toneImage = new Image();
+    toneImage.src = S.shot;
+    toneImage.onload = () => sampleTone();
+    return;
+  }
+  if (!toneImage.complete || !toneImage.naturalWidth) return;
+
+  const CW = 180;
+  const CH = Math.max(1, Math.round((CW * S.design.h) / S.design.w));
+  const cv = document.createElement('canvas');
+  cv.width = CW;
+  cv.height = CH;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(toneImage, 0, 0, CW, CH);
+
+  // 统一按整屏平均明暗决定色调：逐卡片判断会让同一块面板里出现明暗两套玻璃，
+  // 视觉上拼不起来，宁可整体统一。
+  const data = ctx.getImageData(0, 0, CW, CH).data;
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    sum += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+  }
+  const avg = sum / (data.length / 4) / 255;
+  const tone = avg < 0.52 ? 'dark' : 'light';
+  if (document.body.dataset.tone !== tone) document.body.dataset.tone = tone;
+}
 
 /* ============================ 交互基础设施 ============================ */
 
@@ -832,7 +935,7 @@ function openGal() {
   if (S.gallery) return;
   S.gallery = openGallery($('#gallery'), {
     cfg: S.cfg,
-    onAdd: (kind, size) => addWidget(kind, size),
+    onAdd: (kind, size, material) => addWidget(kind, size, material),
     onClose: () => {
       S.gallery = null;
       updateHit();
@@ -841,10 +944,10 @@ function openGal() {
       Object.assign(S.cfg, patch);
       applyMaterial();
       save();
-      // 切到玻璃/暮色都要重抓底图：不重抓的话，之前从石墨切过来的那次
-      // 手上根本没有壁纸，玻璃会退化成一块不透的白板。
-      if (S.cfg.material === 'solid') document.body.dataset.glass = '0';
-      else loadGlass();
+      // 全局材质变了要重判要不要抓屏（收纳面板/弹层跟随全局）；
+      // needsShot 会把「卡片各自材质」也算进去，不会因为全局是石墨
+      // 就把桌面上那张玻璃卡的白膜撤掉。
+      loadGlass();
     }
   });
   updateHit();
@@ -1200,7 +1303,10 @@ function dumpLayout() {
       design: S.design,
       widgets: [...document.querySelectorAll('#stage .card')].map((el) => {
         const r = el.getBoundingClientRect();
-        return [el.dataset.kind, el.dataset.size, Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+        const cs = getComputedStyle(el);
+        return [el.dataset.kind, el.dataset.size, el.dataset.material || '',
+          Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height),
+          cs.backgroundColor, cs.color];
       }),
       organizer: (() => {
         const r = $('#organizer').getBoundingClientRect();

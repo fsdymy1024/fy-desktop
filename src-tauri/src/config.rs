@@ -57,6 +57,9 @@ pub struct WidgetCfg {
     pub size: String,
     pub w: f64,
     pub h: f64,
+    /// glass | dusk | solid。空 = 跟随全局 cfg.material（老配置兼容）
+    #[serde(default)]
+    pub material: String,
 }
 
 fn d_size() -> String {
@@ -197,6 +200,7 @@ fn widget(kind: &str, x: f64, y: f64) -> WidgetCfg {
         size,
         w,
         h,
+        material: String::new(),
     }
 }
 
