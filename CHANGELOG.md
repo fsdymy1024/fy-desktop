@@ -10,9 +10,67 @@
 
 ### 计划中
 
-- 真亚克力材质（读取壁纸后逐卡片模糊）
-- 收纳格子内拖拽排序
-- 快捷方式真实图标（解析 `.lnk`）
+- 格子内拖拽排序
+- 多屏支持
+- 图标白底抠除
+
+## [0.2.0] - 2026-11-15
+
+技术栈整体重写：Electron → **Rust + Tauri v2**。内存从约 180 MB 降到 60 MB，
+安装包从 80 MB 降到 **1.9 MB**。v0.1 的「模拟玻璃 + 虚拟分组」全部换成真实实现。
+
+### 新增
+
+- **真毛玻璃**：`SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` 让窗口对截图隐形 →
+  `BitBlt` 抓纯桌面 → 降采样 1/3 + 高斯模糊 σ=13 → 按卡片屏幕坐标裁切铺底。
+  模糊的是用户真实壁纸，换壁纸跟着变。抓图失败时自动退回纯色玻璃，界面不空白。
+- **真实图标**：走 `IShellItemImageFactory::GetImage`（`SIIGBF_ICONONLY`）取 64×64 缩略图，
+  `.lnk` / 文件夹 / 文档都显示系统真实图标；按 `SHA256(路径+mtime+size)` 缓存。
+- **收纳改为真实文件夹**：每个分组就是 `<桌面>\fy-desktop\<组名>`，同盘 `rename`、
+  跨盘复制后删源；重名自动加 `(2)`，绝不覆盖；右键可移回桌面。
+- **组件增删与缩放**：组件库面板添加、编辑态 × / Delete 移除、拖动改位置、右下角把手改尺寸，
+  每个组件有最小尺寸，位置与尺寸自动持久化。
+- **自适应明暗**：采样模糊底图整屏平均亮度，偏暗时统一切深玻璃 + 浅字，避免同一面板两套明暗。
+- **安装包**：NSIS 单文件安装包（1.9 MB），per-user 装到 `%LOCALAPPDATA%\fy-desktop`，
+  不需要管理员权限；创建开始菜单与桌面快捷方式、注册卸载项；支持 `/S` 静默安装。
+- **开机自启**：默认开启，只写 `HKCU\...\Run`；托盘勾选状态读注册表真实值。
+- **无界面自检**：`FY_SELFTEST=1` 跑 8 项断言（扫描/移入/移出/重名/图标/抓屏/自启/可写），只碰临时目录。
+- **新增组件**：数字时钟（208×90）。
+
+### 变更
+
+- 组件尺寸整体缩小一档：天气 296×128、模拟时钟 296×200、日历 296×150、系统 296×150、网络 296×138、备忘录 296×116。
+- 布局坐标系改为设计像素：`#stage` 整体 `transform: scale(ui)`，`ui = (屏宽/1920).clamp(1, 2)`。
+- 鼠标穿透改由 Rust 线程每 30ms 轮询光标位置 + 前端上报热区（Tauri 无 Electron 的 `forward` 选项）。
+- 收纳根目录默认改为 `<桌面>\fy-desktop`，不再是 `%APPDATA%` 下的隐藏目录。
+- 托盘菜单精简为：添加组件… / 编辑布局 / 刷新桌面底图 / 开机自启 / 打开收纳文件夹 / 设置文件… / 退出。
+
+### 修复
+
+- **开机自启误写 HKLM**：`tauri-plugin-autostart` 固定用 `Dynamic` 模式（先试 HKLM），
+  管理员身份运行时会写进机器级注册表，给所有用户挂上一个指向当前用户目录的启动项。
+  改为直连 `auto-launch` 并显式指定 `CurrentUser`。
+- **窗口全空白**：`withGlobalTauri` 注入被 CSP 拦掉，且窗口在 `ui_ready` 前隐藏，屏幕上什么都不显示。
+  改为 `csp: null`，并让前端把桥接失败直接画到页面上。
+- **事件全部失效**：缺少 Tauri v2 的 capabilities 声明，8 条 `event.listen not allowed`，
+  指标与天气永远不更新；补 `core:event:default` 等权限。
+- **深色壁纸下文字仍是黑色**：CSS 变量继承的是父级计算值，改 `--ink` 不会重算子元素；显式 `color: var(--ink)`。
+- **干净截图只收起 0 个窗口**：`GetWindow(hwnd, GW_OWNER)` 无 owner 时返回 `Err`，判断写反。
+- **最小化其它窗口后自身被桌面盖住**：抓图前临时置顶，拍完回到底层。
+- 修正收纳面板固定整屏高导致的大片空白（高度改 auto + `max-height` 兜底）。
+- 修正日历星期表头在深色玻璃上几乎看不清（提升一档对比度）。
+
+### 移除
+
+- 删除 Electron 主进程、preload、v0.1 渲染层备份（`src/main`、`src/preload`、`src/renderer_v1_backup`）。
+- 删除 v0.1 布局迁移逻辑：尺寸规范已变，按比例搬旧坐标会让卡片互相压叠。
+- 删除 `_manifest.json` 还原机制（收纳改成真实文件夹后，移回原位即可，不再需要清单）。
+
+### 安全
+
+- 前端完全无文件系统能力；所有路径操作在 Rust 侧，统一走 `sanitize()` 与重名检测。
+- Tauri v2 权限白名单：未声明的 IPC 一律拒绝。
+- 收纳只移动、不删除；删分组会先把文件搬回桌面再删空目录。
 
 ## [0.1.0] - 2026-11-15
 
@@ -56,5 +114,6 @@
 - 渲染层启用 `contextIsolation`、关闭 `nodeIntegration`，IPC 走白名单；天气请求只发生在主进程，渲染层无外网访问能力。
 - 整理操作只移动、不删除，且移动前必须通过确认弹层。
 
-[Unreleased]: https://github.com/your-name/fy-desktop/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/your-name/fy-desktop/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/your-name/fy-desktop/releases/tag/v0.2.0
 [0.1.0]: https://github.com/your-name/fy-desktop/releases/tag/v0.1.0
