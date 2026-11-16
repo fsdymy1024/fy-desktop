@@ -1384,6 +1384,25 @@ body[data-edit="1"] .grip {
   box-shadow: 0 40px 80px -36px rgba(0, 0, 0, 0.95);
 }
 
+/* 玻璃：深蓝黑玻璃（demo 材质），和桌面上的玻璃卡同一族色。
+   玻璃在 0.9.4 改成深色后，这里必须跟着深——不然桌面全深、
+   打开「添加组件」却弹一块白板。 */
+.gal[data-mat="glass"] {
+  --gal-bg: rgba(26, 34, 48, 0.97);
+  --gal-ink: rgba(238, 243, 250, 0.94);
+  --gal-ink2: rgba(238, 243, 250, 0.58);
+  --gal-ink3: rgba(238, 243, 250, 0.38);
+  --gal-line: rgba(255, 255, 255, 0.1);
+  --gal-card: rgba(255, 255, 255, 0.055);
+  --gal-hover: rgba(140, 190, 255, 0.12);
+  --prev-a: #2c3850;
+  --prev-b: #101828;
+  --prev-ink: rgba(238, 243, 250, 0.94);
+  --prev-sub: rgba(238, 243, 250, 0.5);
+  border-color: rgba(172, 206, 255, 0.14);
+  box-shadow: 0 40px 80px -36px rgba(0, 0, 0, 0.95);
+}
+
 /* 石墨：纯中性深灰，不带壁纸纹理 */
 .gal[data-mat="solid"] {
   --gal-bg: rgba(39, 41, 44, 0.97);
