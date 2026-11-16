@@ -1,0 +1,95 @@
+# 自动 release：打 tag（v*）或手动触发 → Windows 构建 → 发布 GitHub Release
+#
+# 触发方式：
+#   1. 发版三步走（版本号先在 package.json / Cargo.toml / tauri.conf.json 三处升好）：
+#        git add -A && git commit -m "v0.9.7: xxx"
+#        git tag v0.9.7
+#        git push origin main --tags
+#   2. 手动：GitHub 仓库页 → Actions → Release → Run workflow
+#      （手动触发用 tauri.conf.json 里的版本号建 release，适合重跑/补发）
+#
+# 签名：CI 上默认不签名（scripts/sign.ps1 找不到证书时自动跳过，不会卡构建）。
+#       想在 CI 签名，配两个仓库 secrets：
+#         FY_SIGN_PFX_BASE64   —— 证书 .pfx 的 base64（PowerShell:
+#                                 [Convert]::ToBase64String([IO.File]::ReadAllBytes("证书.pfx"))
+#                                 结果整段贴进去）
+#         FY_SIGN_PFX_PASSWORD —— 证书密码（无密码可留空）
+#
+# 注意：应用内「检查更新」走 releases/latest，所以这里直接发布正式 release
+#       （releaseDraft: false），发 draft 应用会查不到新版本。
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装 Rust（stable）
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 编译缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖（Tauri CLI）
+        run: npm ci
+
+      - name: 校验三处版本号一致
+        run: npm run check:version
+
+      - name: 导入签名证书（可选，未配 secrets 则跳过签名）
+        env:
+          FY_SIGN_PFX_BASE64: ${{ secrets.FY_SIGN_PFX_BASE64 }}
+          FY_SIGN_PFX_PASSWORD: ${{ secrets.FY_SIGN_PFX_PASSWORD }}
+        shell: pwsh
+        run: |
+          if (-not $env:FY_SIGN_PFX_BASE64) {
+            Write-Host "未配置 FY_SIGN_PFX_BASE64，跳过签名（sign.ps1 会自动放行）"
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "fy-sign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:FY_SIGN_PFX_BASE64))
+          $sec = if ($env:FY_SIGN_PFX_PASSWORD) {
+            ConvertTo-SecureString $env:FY_SIGN_PFX_PASSWORD -AsPlainText -Force
+          } else {
+            New-Object System.Security.SecureString
+          }
+          $cert = Import-PfxCertificate -FilePath $pfx `
+            -CertStoreLocation Cert:\CurrentUser\My -Password $sec
+          "FY_SIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File -Append $env:GITHUB_ENV
+          Remove-Item $pfx -Force
+          Write-Host "已导入签名证书 $($cert.Thumbprint)"
+
+      - name: 构建并发布 Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # release 名取 tauri.conf.json 的版本号（tag 发版时与本 tag 一致）
+          tagName: v{{version}}
+          releaseName: 'fy-desktop v{{version}}'
+          releaseBody: '桌面玻璃小组件与快捷方式收纳。更新内容见 [CHANGELOG.md](https://github.com/fsdymy1024/fy-desktop/blob/main/CHANGELOG.md)。'
+          # 应用内检查更新查的是 releases/latest，必须正式发布，不能 draft
+          releaseDraft: false
+          prerelease: false
+          # 只出 Windows 安装包（本项目 bundle targets 只有 nsis）
+          args: ''
