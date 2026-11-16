@@ -275,4 +275,4 @@ FY_SELFTEST=1 src-tauri/target/release/fy-desktop.exe
 
 ## 许可
 
-MIT
+[Apache License 2.0](LICENSE)
