@@ -621,6 +621,19 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     全程 ~150ms；设置排除后要等 DWM 合成一帧（留 150ms）再 BitBlt，
     否则抓到的还是「没排除」的上一帧。验证要靠**另一个进程**的 GDI BitBlt
     截图对比，自己进程里的截图看不出差别（同一套屏幕 DC）。
+38. **`Command::arg` 会给整串套引号，把 `/select,` 的参数切断** → 收纳格里右键
+    「打开所在位置」跳到了「文档」。explorer 的分隔符是空格，正确写法是
+    `/select,"C:\路径 with space\a.lnk"`——**引号只包路径**；而 Rust 的
+    `Command::arg("/select,C:\… with space\a.lnk")` 遇到空格会把**整个参数**
+    包成 `"/select,C:\… with space\a.lnk"`，explorer 在自己的解析器里按空格
+    切开后 `/select,` 只剩半截，于是退化成打开默认文件夹（文档）。
+    改用 `CommandExt::raw_arg` 自己拼引号。顺带两件事：
+    - `/select,` 会**复用已有窗口**，不产生新 HWND，所以「轮询新窗口、等不到就
+      报错」的逻辑必须放宽——等一小段、把仍隐藏的资源管理器窗口亮出来即可，
+      否则每次定位都白等 1.5s 还弹失败 toast；
+    - 文件夹的 `/n,<path>` 有同样的引号问题，一并改成 `/n,"<path>"`。
+    验证手段：`FY_REVEAL_PATH=<含空格的 .lnk>` 起程序，看 `launch.log` 里
+    `reveal … → Ok`，且没有新窗口落在文档。
 
 ## 10. 后续路线
 

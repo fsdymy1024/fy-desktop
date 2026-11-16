@@ -434,6 +434,13 @@ fn force_show(hwnd: isize) {
     }
 }
 
+#[cfg(windows)]
+fn window_visible(hwnd: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+    unsafe { IsWindowVisible(HWND(hwnd as *mut _)).as_bool() }
+}
+
 /// 起一个 explorer 进程，并保证它的窗口是**可见**的。
 ///
 /// 为什么不能只用 ShellExecute：
@@ -441,23 +448,35 @@ fn force_show(hwnd: isize) {
 ///    打开过就会留下一个），ShellExecuteW 不会新建窗口，而是把那个**隐藏**窗口
 ///    导航过去，返回值还是 >32 的「成功」——用户看到的就是「点了没反应」。
 /// 2. 无控制台进程派生的子进程可能继承「不显示窗口」的启动状态。
-/// 所以这里用 `/n` 强制开新窗口，再轮询新出现的窗口把它 ShowWindow + 置前。
+/// 所以这里自己起 explorer，再轮询新出现的窗口把它 ShowWindow + 置前。
+///
+/// `raw` 是**已经带好引号**的命令行片段。必须用 `raw_arg` 拼：`Command::arg`
+/// 会给整个参数套一层引号（`"/select,C:\a b\x.lnk"`），explorer 按空格切开后
+/// `/select,` 就失效了，于是新窗口落在「文档」而不是选中目标——v0.9.7 修的就是它。
+///
+/// `require_new = false` 用于 `/select,`：它会复用已有的窗口，不会产生新窗口，
+/// 这时只把仍处于隐藏状态的资源管理器窗口亮出来即可，不算失败。
 #[cfg(windows)]
-fn spawn_explorer(args: &[String]) -> Result<(), String> {
+fn spawn_explorer(raw: &str, require_new: bool) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     let before = explorer_windows();
     let mut cmd = std::process::Command::new("explorer");
-    for a in args {
-        cmd.arg(a);
-    }
+    cmd.raw_arg(raw);
     // CREATE_NO_WINDOW：不闪控制台；窗口显示交给后面的 ShowWindow
     if let Err(e) = cmd.creation_flags(0x0800_0000).spawn() {
         log_launch(&format!("  explorer spawn 失败：{e}"));
         return Err(format!("启动资源管理器失败：{e}"));
     }
 
-    for _ in 0..25 {
+    // /n 需要等新窗口；/select 在已有可见窗口里定位时不用傻等 1.5 秒
+    let rounds = if !require_new && before.iter().any(|h| window_visible(*h)) {
+        8
+    } else {
+        25
+    };
+
+    for _ in 0..rounds {
         std::thread::sleep(std::time::Duration::from_millis(60));
         let fresh: Vec<isize> = explorer_windows()
             .into_iter()
@@ -469,6 +488,24 @@ fn spawn_explorer(args: &[String]) -> Result<(), String> {
             std::thread::sleep(std::time::Duration::from_millis(140));
             force_show(h);
             log_launch(&format!("  new window {h:#x} shown"));
+            return Ok(());
+        }
+    }
+
+    if !require_new {
+        let wins = explorer_windows();
+        if wins.iter().any(|h| window_visible(*h)) {
+            // 已有可见窗口：/select 已经在它里面定位好了。
+            // 此时别去碰别的窗口——机器上可能还躺着一个隐藏的「此电脑」，
+            // 无差别 ShowWindow 会把它也弹出来，反而添乱。
+            return Ok(());
+        }
+        let hidden: Vec<isize> = wins.iter().copied().filter(|h| !window_visible(*h)).collect();
+        if !hidden.is_empty() {
+            for h in hidden {
+                force_show(h);
+            }
+            log_launch("  reuse window, hidden one shown");
             return Ok(());
         }
     }
@@ -489,13 +526,9 @@ fn spawn_explorer(args: &[String]) -> Result<(), String> {
 #[cfg(windows)]
 pub fn open_path(path: &str) -> Result<(), String> {
     if std::path::Path::new(path).is_dir() {
-        // 路径里带逗号时 /n,<path> 会被切错，这种少见情况只给裸路径
-        let open_args = if path.contains(',') {
-            vec![path.to_string()]
-        } else {
-            vec![format!("/n,{path}")]
-        };
-        let ret = spawn_explorer(&open_args);
+        // 引号只包路径，别让 std 给整串套引号：路径里带空格时 explorer 会在空格处
+        // 切分，"C:\Users\a b" 这种目录就会变成打开「文档」
+        let ret = spawn_explorer(&format!("/n,\"{path}\""), true);
         log_launch(&format!("open(folder) {path} → {ret:?}"));
         if ret.is_ok() {
             return Ok(());
@@ -575,9 +608,9 @@ pub fn open_url(url: &str) -> Result<(), String> {
 pub fn reveal_path(path: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        // /select, 会在已有窗口里定位并选中，同样可能落进那个隐藏窗口，
-        // 所以还是走「开新窗口 + 强制显示」这条路
-        let r = spawn_explorer(&[format!("/select,{path}")]);
+        // /select, 会在已有窗口里定位并选中；没有窗口时 explorer 自己开一个。
+        // 引号只包路径：整串套引号会让空格把参数切断，explorer 于是打开「文档」。
+        let r = spawn_explorer(&format!("/select,\"{path}\""), false);
         log_launch(&format!("reveal {path} → {r:?}"));
         r
     }

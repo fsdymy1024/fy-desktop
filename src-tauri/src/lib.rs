@@ -154,6 +154,16 @@ pub fn run() {
                 }
             }
 
+            // FY_REVEAL_PATH=<路径>：验证「打开所在位置」真的选中了目标，
+            // 而不是在「文档」里开一个新窗口。看 launch.log 里有没有
+            // `reveal ... → Ok` 且没有落在错误目录的迹象。
+            if let Ok(p) = std::env::var("FY_REVEAL_PATH") {
+                match desktop::reveal_path(&p) {
+                    Ok(()) => println!("[reveal] FY_REVEAL_PATH 成功：{p}"),
+                    Err(e) => eprintln!("[reveal] FY_REVEAL_PATH 失败：{e}"),
+                }
+            }
+
             // 开机自启以配置为准。安装版首启默认开，之后用户从托盘关掉就按配置关。
             // dev 下不碰，免得把 debug exe 写进注册表。
             if !cfg!(debug_assertions) {
