@@ -41,30 +41,63 @@ pub fn spawn_hit_guard(app: AppHandle) {
                 continue;
             };
             let state = app.state::<AppState>();
+
+            #[cfg(windows)]
+            let cursor = {
+                let mut pt = POINT::default();
+                if unsafe { GetCursorPos(&mut pt) }.is_err() {
+                    None
+                } else {
+                    Some((pt.x as f64, pt.y as f64))
+                }
+            };
+            #[cfg(not(windows))]
+            let cursor: Option<(f64, f64)> = None;
+
+            let mut menu_outside = false;
             let (regions, force) = {
-                let h = match state.hit.lock() {
+                let mut h = match state.hit.lock() {
                     Ok(h) => h,
                     Err(p) => p.into_inner(),
                 };
+                // 托盘菜单开着时盯全局左键：点在菜单外就通知前端收起。
+                // 点别的应用 / 任务栏时我们窗口收不到任何事件，前端全靠这一手。
+                #[cfg(windows)]
+                if let Some((x, y)) = cursor {
+                    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+                    let down = (unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000) != 0;
+                    if let Some(rect) = h.menu {
+                        let outside =
+                            !(x >= rect[0] && x <= rect[2] && y >= rect[1] && y <= rect[3]);
+                        if !h.menu_armed {
+                            // 弹出菜单的那一下左键可能还没松，等一次抬起再开始判
+                            if !down {
+                                h.menu_armed = true;
+                            }
+                        } else if down && !h.last_down && outside {
+                            h.menu = None;
+                            menu_outside = true;
+                        }
+                    }
+                    h.last_down = down;
+                }
                 (h.regions.clone(), h.force)
             };
 
-            #[cfg(windows)]
-            let inside = {
-                let mut pt = POINT::default();
-                let ok = unsafe { GetCursorPos(&mut pt) };
-                if ok.is_err() {
-                    false
-                } else {
-                    let (x, y) = (pt.x as f64, pt.y as f64);
+            if menu_outside {
+                use tauri::Emitter;
+                let _ = app.emit("menu:outside", ());
+            }
+
+            let inside = match cursor {
+                Some((x, y)) => {
                     force
                         || regions
                             .iter()
                             .any(|r| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3])
                 }
+                None => force,
             };
-            #[cfg(not(windows))]
-            let inside = force;
 
             let ignore = !inside;
             if ignore != last {

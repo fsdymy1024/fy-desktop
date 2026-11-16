@@ -10,7 +10,7 @@
  */
 
 import { REGISTRY, ORDER, SIZE_LABEL, dimsOf } from './widgets.js';
-import { makeDraggable } from './floatwin.js';
+import { makeDraggable, closeOnBackdrop } from './floatwin.js';
 
 const MATERIALS = [
   ['glass', '玻璃'],
@@ -100,6 +100,7 @@ export function openGallery(host, opts) {
   );
 
   const close = () => {
+    disposeBackdrop();
     disposeDrag();
     host.hidden = true;
     host.innerHTML = '';
@@ -111,8 +112,10 @@ export function openGallery(host, opts) {
   };
   document.addEventListener('keydown', onKey);
 
+  // 点窗口外的桌面即关闭：打开期间整窗接管鼠标，不关就等于把桌面锁死
+  const disposeBackdrop = closeOnBackdrop(host, close);
+
   host.onclick = (e) => {
-    // 点遮罩不关闭：这几个窗口只有 x / Esc 才关，点别处不会凭空消失
     if (e.target === host) return;
     if (e.target.closest('.gal-close')) return close();
 

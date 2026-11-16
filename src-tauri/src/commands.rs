@@ -269,6 +269,18 @@ pub fn set_hit_regions(state: State<'_, AppState>, rects: Vec<[f64; 4]>, force: 
     crate::window::set_regions(&state, rects, force);
 }
 
+/// 托盘菜单打开/关闭时由前端上报菜单矩形（物理像素）。
+/// 传 null 表示菜单已收起，后台不再监听全局左键。
+#[tauri::command]
+pub fn set_menu_rect(state: State<'_, AppState>, rect: Option<[f64; 4]>) {
+    eprintln!("[menu] rect={rect:?}");
+    if let Ok(mut h) = state.hit.lock() {
+        h.menu = rect;
+        h.menu_armed = false;
+        h.last_down = false;
+    }
+}
+
 /// 抓一张不含本窗口的桌面底图，给前端做毛玻璃背景
 #[tauri::command]
 pub fn glass_snapshot(app: AppHandle) -> Result<String, String> {

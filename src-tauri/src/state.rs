@@ -11,6 +11,15 @@ pub struct HitState {
     pub force: bool,
     /// 当前是否处于穿透状态，只在变化时才调系统 API
     pub ignoring: bool,
+    /// 托盘菜单的矩形（物理像素）。Some 时后台轮询全局左键，
+    /// 落在它外面就推 `menu:outside` 让前端收起菜单——
+    /// 点在别的应用或任务栏上时，我们的窗口根本收不到事件，只能靠后端。
+    pub menu: Option<[f64; 4]>,
+    /// 菜单刚弹出的那一拍左键可能还按着（托盘那一下），
+    /// 等看到一次「抬起」再开始判「按下」，否则菜单会立刻被自己关掉。
+    pub menu_armed: bool,
+    /// 上一轮轮询时左键是否按下，用来取按下的上升沿
+    pub last_down: bool,
 }
 
 pub struct AppState {

@@ -7,7 +7,7 @@
  */
 
 import { invoke } from './bridge.js';
-import { makeDraggable } from './floatwin.js';
+import { makeDraggable, closeOnBackdrop } from './floatwin.js';
 
 const REPO = 'https://github.com/fsdymy1024/fy-desktop';
 
@@ -82,12 +82,16 @@ export function openAbout(host, opts) {
   let found = null;
 
   const close = () => {
+    disposeBackdrop();
     disposeDrag();
     host.hidden = true;
     host.innerHTML = '';
     document.removeEventListener('keydown', onKey);
     onClose?.();
   };
+
+  // 点窗口外的桌面即关闭：打开期间整窗接管鼠标，不关就等于把桌面锁死
+  const disposeBackdrop = closeOnBackdrop(host, close);
   const onKey = (e) => {
     if (e.key === 'Escape') close();
   };
@@ -159,7 +163,6 @@ export function openAbout(host, opts) {
   }
 
   host.onclick = (e) => {
-    // 点遮罩不关闭：只有 x / Esc 才关
     if (e.target === host) return;
     if (e.target.closest('.ab-close')) return close();
     const act = e.target.closest('[data-act]')?.dataset.act;

@@ -10,7 +10,7 @@ import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf, GAP } from './widgets.js'
 import { renderOrganizer, groupAtPoint, resetLoose } from './organizer.js';
 import { openGallery } from './gallery.js';
 import { openAbout, updateHint } from './about.js';
-import { makeDraggable } from './floatwin.js';
+import { makeDraggable, closeOnBackdrop } from './floatwin.js';
 import { clamp } from './util.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -48,6 +48,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 async function boot() {
   const b = await invoke('boot');
+  S.uitest = b.uitest || '';
   S.cfg = b.config;
   S.design = { w: b.design[0], h: b.design[1] };
   S.scale = b.scale || 1;
@@ -108,6 +109,17 @@ async function boot() {
   }
   // 调试：FY_UI=place|group 时自动打开对应弹层，方便截图核对样式与命中区
   if (b.uitest === 'place') setTimeout(() => pickPlace(), 400);
+  // FY_UI=placesearch：再自动搜一次，用来核对结果项的对比度与行高
+  if (b.uitest === 'placesearch')
+    setTimeout(() => {
+      pickPlace();
+      setTimeout(() => {
+        const input = document.querySelector('.modal .modal-input');
+        if (!input) return;
+        input.value = '西湖区';
+        document.querySelector('.modal [data-search]')?.click();
+      }, 600);
+    }, 400);
   // FY_UI=edit：进编辑模式，用来核对虚线框、参考线这些只在编辑态出现的东西
   if (b.uitest === 'edit') setTimeout(() => setEdit(true), 400);
   if (b.uitest === 'group') setTimeout(() => promptInput('新建分组', '例如：设计素材'), 400);
@@ -145,26 +157,34 @@ async function boot() {
         }, 900);
       }, 700);
     }, 500);
-  // FY_UI=floatwin：验证浮层「点外部不关 / 可拖动 / 只有 x 才关」。
-  // 三步结果写进 S.floatProbe，dump 里读；最后重新打开窗口便于截图核对。
+  // FY_UI=floatwin：验证浮层「点遮罩关 / 拖动不误关 / x 也关」。
+  // 结果写进 S.floatProbe，dump 里读；最后重新打开窗口便于截图核对。
   if (b.uitest === 'floatwin')
     setTimeout(() => {
       openAboutPanel();
       setTimeout(() => {
         const host = $('#about');
         const M = (t, o) => new MouseEvent(t, { bubbles: true, button: 0, ...o });
+        // 按下与点击都落在遮罩上 → 应该关闭（否则桌面会被透明板锁死）
+        host.dispatchEvent(M('mousedown', {}));
         host.dispatchEvent(M('click', {}));
-        const stayed = !host.hidden;
-        const head = host.querySelector('.ab-head');
-        head.dispatchEvent(M('mousedown', { clientX: 200, clientY: 200 }));
-        document.dispatchEvent(M('mousemove', { clientX: 300, clientY: 260 }));
-        document.dispatchEvent(M('mouseup', {}));
-        const moved = host.querySelector('.ab')?.style.transform || '';
-        host.querySelector('.ab-close')?.click();
-        const closedByX = host.hidden;
+        const closedByBackdrop = host.hidden;
         openAboutPanel();
-        S.floatProbe = { stayedAfterBackdrop: stayed, moved, closedByX };
-        setTimeout(() => dumpLayout(), 250);
+        setTimeout(() => {
+          const h2 = $('#about');
+          // 从标题栏按下、拖到遮罩上松手：不应关闭
+          h2.querySelector('.ab-head').dispatchEvent(M('mousedown', { clientX: 200, clientY: 200 }));
+          document.dispatchEvent(M('mousemove', { clientX: 300, clientY: 260 }));
+          document.dispatchEvent(M('mouseup', {}));
+          h2.dispatchEvent(M('click', {}));
+          const stayedAfterDrag = !h2.hidden;
+          const moved = h2.querySelector('.ab')?.style.transform || '';
+          h2.querySelector('.ab-close')?.click();
+          const closedByX = h2.hidden;
+          openAboutPanel();
+          S.floatProbe = { closedByBackdrop, stayedAfterDrag, moved, closedByX };
+          setTimeout(() => dumpLayout(), 250);
+        }, 400);
       }, 700);
     }, 500);
   if (b.uitest === 'about') setTimeout(() => openAboutPanel(), 500);
@@ -1131,13 +1151,10 @@ function modal(title, bodyHtml, opts = {}) {
       resolve(v);
     };
 
-    // 点遮罩不关闭、也不让焦点跑掉：想取消就按「取消」或 Esc
-    wrap.addEventListener('mousedown', (e) => {
-      if (e.target === wrap) {
-        e.preventDefault();
-        wrap.querySelector('input,textarea')?.focus();
-      }
-    });
+    // 点遮罩 = 取消。浮层打开期间整窗接管鼠标（见函数头注释），
+    // 遮罩若不吃这一下，桌面就完全点不动了；判定「按下也在遮罩上」才关，
+    // 从窗口里拖出去松手不会误关。
+    closeOnBackdrop(wrap, () => close(null));
     wrap.querySelector('[data-close]').onclick = () => close(null);
     wrap.querySelector('[data-x]').onclick = () => close(null);
     wrap.querySelector('[data-ok]')?.addEventListener('click', () => close(opts.onOk?.(wrap) ?? null));
@@ -1340,14 +1357,34 @@ function bindGlobalEvents() {
     S.force = false;
     document.removeEventListener('mousedown', trayOutside, true);
     document.removeEventListener('keydown', trayEsc, true);
+    // 通知后端停止「菜单外点击」监听
+    invoke('set_menu_rect', { rect: null }).catch(() => {});
     updateHit();
   };
 
+  // 注意判的是 .tm 菜单盒，不是 trayHost：#traymenu 是铺满全屏的容器，
+  // 用 contains(trayHost) 的话任何点击都算「在菜单里」，菜单永远收不回去。
   const trayOutside = (e) => {
-    if (!trayHost.contains(e.target)) closeTrayMenu();
+    const box = trayHost.querySelector('.tm');
+    if (!box || !box.contains(e.target)) closeTrayMenu();
   };
   const trayEsc = (e) => {
     if (e.key === 'Escape') closeTrayMenu();
+  };
+
+  /** 把菜单盒的物理矩形报给后端：左键落在它外面（包括点在别的应用、任务栏上）
+   *  时后端推 menu:outside，把菜单收起。前端 mousedown 只能覆盖我们自己窗口内的点击。 */
+  const syncMenuRect = () => {
+    const box = trayHost.querySelector('.tm');
+    if (!trayMenuOpen || !box) {
+      invoke('set_menu_rect', { rect: null }).catch(() => {});
+      return;
+    }
+    const r = box.getBoundingClientRect();
+    const d = dpr();
+    invoke('set_menu_rect', {
+      rect: [r.left * d, r.top * d, r.right * d, r.bottom * d]
+    }).catch(() => {});
   };
 
   function openTrayMenu(rect) {
@@ -1394,7 +1431,34 @@ function bindGlobalEvents() {
     // 用捕获阶段，防止菜单内按钮的 mousedown 冒泡误关
     setTimeout(() => document.addEventListener('mousedown', trayOutside, true), 0);
     document.addEventListener('keydown', trayEsc, true);
+    // 等菜单完成布局再量矩形，交给后端做「全局点击」判定
+    requestAnimationFrame(syncMenuRect);
   }
+
+  listen('menu:outside', () => closeTrayMenu());
+
+  // 调试：FY_UI=traymenu 直接弹出托盘菜单，再点一下菜单外面，
+  // 验证「点其它地方收回」。结果写进 S.trayProbe。
+  if (S.uitest === 'traymenu')
+    setTimeout(() => {
+      openTrayMenu({
+        x: (window.innerWidth - 140) * dpr(),
+        y: (window.innerHeight - 120) * dpr(),
+        w: 40 * dpr(),
+        h: 40 * dpr()
+      });
+      setTimeout(() => {
+        const box = trayHost.querySelector('.tm');
+        if (!box) return;
+        const r = box.getBoundingClientRect();
+        const x = Math.max(1, r.left - 30);
+        const y = Math.max(1, r.top + 20);
+        const target = document.elementFromPoint(x, y) || document.body;
+        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }));
+        S.trayProbe = { closedByOutside: trayHost.hidden };
+        setTimeout(() => dumpLayout(), 200);
+      }, 700);
+    }, 500);
 
   trayHost.addEventListener('click', async (e) => {
     if (!trayMenuOpen) return;
@@ -1612,7 +1676,7 @@ function dumpLayout() {
           bg: document.querySelector('.modal-card') ? getComputedStyle(document.querySelector('.modal-card')).backgroundColor : ''
         }
       },
-      probe: { float: S.floatProbe || null, mat: S.matProbe || null },
+      probe: { float: S.floatProbe || null, mat: S.matProbe || null, tray: S.trayProbe || null },
       err: S.err || '',
       bridge: dbg,
       shot: !!S.shot

@@ -66,6 +66,7 @@ pub fn run() {
             commands::rename_group,
             commands::delete_group,
             commands::set_hit_regions,
+            commands::set_menu_rect,
             commands::glass_snapshot,
             commands::set_autostart,
             commands::weather_now,

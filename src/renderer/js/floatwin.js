@@ -68,3 +68,31 @@ export function makeDraggable(panel, handle, key) {
   handle.addEventListener('mousedown', onDown);
   return () => handle.removeEventListener('mousedown', onDown);
 }
+
+/**
+ * 点遮罩关闭浮层。
+ *
+ * 这三个窗口（组件库 / 关于 / 弹窗）打开时整窗接管鼠标，遮罩本身就在最外层，
+ * 所以「点窗口外的桌面」在这里就是「点遮罩」——必须能关，否则用户会觉得
+ * 桌面被一块透明板锁死（v0.9.8 之前就是这个体感）。
+ *
+ * 只认「按下的地方就是遮罩」的那一次点击：从面板里按下、拖到遮罩上松手
+ * （拖标题栏、选文字都会这样）不算，避免误关。
+ */
+export function closeOnBackdrop(host, close) {
+  let downOnMask = false;
+  const onDown = (e) => {
+    downOnMask = e.target === host;
+  };
+  const onClick = (e) => {
+    const wasMask = downOnMask;
+    downOnMask = false;
+    if (wasMask && e.target === host) close();
+  };
+  host.addEventListener('mousedown', onDown);
+  host.addEventListener('click', onClick);
+  return () => {
+    host.removeEventListener('mousedown', onDown);
+    host.removeEventListener('click', onClick);
+  };
+}
