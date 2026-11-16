@@ -20,13 +20,28 @@
   --ink3: rgba(26, 22, 19, 0.40);
   --line: rgba(120, 90, 70, 0.12);
 
-  /* 玻璃：0.86 的白膜压在模糊底图上——这是 v0.7 的观感，v0.8 曾调到
-     0.62/0.58 想多透出壁纸，结果用户觉得「玻璃配色不对」。v0.9 请回原值。
-     白膜画在 ::before 的第一层（见下），底图再暗卡片也是浅的。 */
-  --fill: rgba(255, 253, 250, 0.86);
-  --fill-2: rgba(255, 253, 250, 0.94);
-  --veil: rgba(255, 253, 250, 0.8);
-  --stroke: rgba(255, 255, 255, 0.52);
+  /* 玻璃 · 向 atrium-desktop 学的 Liquid Glass 三要素：
+     1) 通透的膜 —— 膜太厚就只是白雾板，膜降到五成左右让模糊底图真正透出来；
+     2) 边缘光学 —— 玻璃的辨识度在边缘：顶亮线 + 底反射线 + 四周微光 +
+        极细的红/蓝错位线（色散，atrium 的 dispersion 0.3 的 CSS 近似）；
+     3) 文字 halo —— 通透之后字不能靠加深膜保可读，靠一圈反色光晕
+        （atrium 规范：亮背景白 35%、暗背景黑 32%）。 */
+  --fill: rgba(255, 253, 250, 0.62);
+  --fill-2: rgba(255, 253, 250, 0.78);
+  --veil: rgba(255, 253, 250, 0.55);
+  --stroke: rgba(255, 255, 255, 0.62);
+  /* 顶部镜面光带（::before 最上层）：左上角一片斜向高光，模拟玻璃顶面反光 */
+  --sheen-hi: rgba(255, 255, 255, 0.40);
+  --sheen-mid: rgba(255, 255, 255, 0.10);
+  /* 文字 halo：亮玻璃上配白晕 */
+  --halo: 0 1px 6px rgba(255, 255, 255, 0.38), 0 0 2px rgba(255, 255, 255, 0.32);
+  /* 边缘光学：顶亮 / 底弱反 / 左右微光 + 色散双线 */
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.24),
+    inset 1px 0 0 rgba(255, 255, 255, 0.28),
+    inset -1px 0 0 rgba(255, 255, 255, 0.28),
+    inset 0 1px 1px rgba(255, 150, 90, 0.10),
+    inset 0 -1px 1px rgba(110, 150, 255, 0.10);
   --accent: #e2622c;
 
   --shadow: 0 20px 44px -26px rgba(46, 28, 14, 0.62),
@@ -79,11 +94,13 @@ button {
   border-radius: var(--radius);
   background: var(--fill);
   border: 1px solid var(--stroke);
-  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  box-shadow: var(--shadow), var(--edge), inset 0 1px 0 rgba(255, 255, 255, 0.55);
   /* 组件级材质：每张卡用自己 data-material 里的 --ink。
      color 必须在这里显式解析，否则会继承 body 的颜色（全局材质），
      暮色/石墨卡就会出现深底深字。 */
   color: var(--ink);
+  /* 文字 halo（继承给全部子文字）：玻璃透出壁纸后，字的可读性靠反色光晕 */
+  text-shadow: var(--halo, none);
   overflow: hidden;
   isolation: isolate;
 }
@@ -98,10 +115,13 @@ button {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background-image: linear-gradient(var(--veil), var(--veil)), var(--shot, none);
-  background-size: 100% 100%, var(--shot-w, 0) var(--shot-h, 0);
-  background-position: 0 0, var(--shot-x, 0) var(--shot-y, 0);
-  background-repeat: no-repeat, no-repeat;
+  /* 三层：顶部镜面光带（最上）→ 白膜 → 模糊底图。
+     光带只盖住左上角一片，模拟玻璃顶面的反光（atrium highlight 0.8）。 */
+  background-image: linear-gradient(168deg, var(--sheen-hi) 0%, var(--sheen-mid) 26%, rgba(255, 255, 255, 0) 46%),
+    linear-gradient(var(--veil), var(--veil)), var(--shot, none);
+  background-size: 100% 100%, 100% 100%, var(--shot-w, 0) var(--shot-h, 0);
+  background-position: 0 0, 0 0, var(--shot-x, 0) var(--shot-y, 0);
+  background-repeat: no-repeat, no-repeat, no-repeat;
   opacity: 0;
   transition: opacity 0.45s ease;
 }
@@ -1456,7 +1476,12 @@ body[data-edit="1"] .grip {
 }
 
 .matbtn[data-mat="glass"] i {
-  background: linear-gradient(145deg, #fbf3e9 0%, #e3d3c0 55%, #cdbbaa 100%);
+  /* 液态玻璃预览：透膜 + 左上顶光 + 顶部亮边 */
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.15) 45%, rgba(255, 255, 255, 0) 60%),
+    linear-gradient(145deg, #f3e8db 0%, #d9c6b2 55%, #b9a48f 100%);
+  border-color: rgba(255, 255, 255, 0.75);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(255, 255, 255, 0.35);
 }
 
 .matbtn[data-mat="dusk"] i {
@@ -1724,6 +1749,17 @@ body[data-material="dusk"],
   --pop-btn: rgba(255, 255, 255, 0.09);
   --pop-btn-hover: rgba(255, 255, 255, 0.16);
   --pop-field: rgba(255, 255, 255, 0.08);
+  /* 深玻璃的光学：顶光弱一档，halo 换黑晕（atrium：暗背景黑 32%），
+     边缘亮线整体压暗，色散保留但更收敛 */
+  --sheen-hi: rgba(255, 255, 255, 0.14);
+  --sheen-mid: rgba(255, 255, 255, 0.04);
+  --halo: 0 1px 6px rgba(0, 0, 0, 0.34), 0 0 2px rgba(0, 0, 0, 0.28);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.07),
+    inset 1px 0 0 rgba(255, 255, 255, 0.09),
+    inset -1px 0 0 rgba(255, 255, 255, 0.09),
+    inset 0 1px 1px rgba(255, 150, 90, 0.06),
+    inset 0 -1px 1px rgba(110, 150, 255, 0.06);
 }
 
 /* 暮色的膜已经把底图压下去了，这里只降一点饱和度让颜色别抢字。
@@ -1735,7 +1771,7 @@ body[data-material="dusk"] .panel::before,
 
 body[data-material="dusk"] .panel,
 .card[data-material="dusk"] {
-  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  box-shadow: var(--shadow), var(--edge);
 }
 
 body[data-material="dusk"] .cell {
@@ -1771,10 +1807,19 @@ body[data-tone="dark"][data-material="glass"] .panel {
   --ink2: rgba(255, 251, 246, 0.68);
   --ink3: rgba(255, 251, 246, 0.46);
   --line: rgba(255, 255, 255, 0.12);
-  --fill: rgba(24, 19, 15, 0.78);
-  --fill-2: rgba(24, 19, 15, 0.88);
-  --veil: rgba(20, 15, 11, 0.8);
+  --fill: rgba(24, 19, 15, 0.66);
+  --fill-2: rgba(24, 19, 15, 0.8);
+  --veil: rgba(20, 15, 11, 0.62);
   --stroke: rgba(255, 255, 255, 0.16);
+  --sheen-hi: rgba(255, 255, 255, 0.12);
+  --sheen-mid: rgba(255, 255, 255, 0.03);
+  --halo: 0 1px 6px rgba(0, 0, 0, 0.34), 0 0 2px rgba(0, 0, 0, 0.28);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    inset 1px 0 0 rgba(255, 255, 255, 0.08),
+    inset -1px 0 0 rgba(255, 255, 255, 0.08),
+    inset 0 1px 1px rgba(255, 150, 90, 0.05),
+    inset 0 -1px 1px rgba(110, 150, 255, 0.05);
   color: var(--ink);
 }
 
@@ -1855,6 +1900,15 @@ body[data-material="solid"],
   --pop-btn: rgba(255, 255, 255, 0.07);
   --pop-btn-hover: rgba(255, 255, 255, 0.14);
   --pop-field: rgba(255, 255, 255, 0.07);
+  /* 实色底不铺光带、不加 halo（atrium：实色背景不加 halo，也不加重），
+     但边缘保留一圈弱亮线，让卡片和壁纸之间有一道「厚度」 */
+  --sheen-hi: rgba(255, 255, 255, 0);
+  --sheen-mid: rgba(255, 255, 255, 0);
+  --halo: none;
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+    inset 1px 0 0 rgba(255, 255, 255, 0.07),
+    inset -1px 0 0 rgba(255, 255, 255, 0.07);
   color: var(--ink);
 }
 
@@ -1862,7 +1916,7 @@ body[data-material="solid"] .panel,
 .card[data-material="solid"] {
   background: rgba(43, 40, 37, 0.82);
   border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow), var(--edge);
 }
 
 body[data-material="solid"] .panel::before,
@@ -1903,6 +1957,8 @@ body[data-material="solid"] .cell.empty .ic {
   --ink2: rgba(255, 251, 246, 0.66);
   --ink3: rgba(255, 251, 246, 0.44);
   --line: rgba(255, 255, 255, 0.14);
+  /* 深底浅字，halo 换黑晕（atrium：暗背景黑 32%） */
+  --halo: 0 1px 6px rgba(0, 0, 0, 0.34), 0 0 2px rgba(0, 0, 0, 0.28);
   /* 必须显式重设 color：子元素继承的是父级 color 的计算值，
      光改 --ink 不会让已经继承下来的文字重新解析变量 */
   color: var(--ink);

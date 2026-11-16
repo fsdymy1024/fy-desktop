@@ -1,6 +1,6 @@
 [package]
 name = "fy-desktop"
-version = "0.9.2"
+version = "0.9.3"
 description = "Windows 桌面玻璃小组件 + 桌面快捷方式收纳格子"
 authors = ["fy"]
 edition = "2021"
