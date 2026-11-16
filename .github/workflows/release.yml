@@ -33,14 +33,17 @@ jobs:
   build-release:
     runs-on: windows-latest
     steps:
+      # [修改1] checkout@v4 → checkout@v6（node24 runtime）
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
+      # [修改2] setup-node@v4 → setup-node@v6（node24 runtime）
+      # [修改3] cache: npm 改为显式关闭自动缓存（高权限 release 工作流更安全）
       - name: 安装 Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
-          cache: npm
+          package-manager-cache: false
 
       - name: 安装 Rust（stable）
         uses: dtolnay/rust-toolchain@stable
