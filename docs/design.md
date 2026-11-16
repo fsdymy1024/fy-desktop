@@ -298,25 +298,30 @@ CSS 的关键改动是把材质变量**下沉**：`--ink/--fill/--veil/--stroke`
 组件库之所以要单独同步，是因为它自有一套 `--gal-*` 变量、按 `.gal[data-mat]`
 取值，不吃 body 的 `--pop-*`。两个变量组各管一摊，改材质时都得照顾到。
 
-### 4.3.5 浮层窗口：可拖动 / 点外部不关 / x 才关（v0.9.1）
+### 4.3.5 浮层窗口：可拖动 / 点遮罩关闭（v0.9.1，v0.9.8 调整）
 
 三个浮层（组件库 `#gallery`、关于 `#about`、弹窗 `.modal`）此前都是
 `position:fixed; inset:0; place-items:center` 的遮罩，窗口固定居中，
 而且组件库和关于页都写了 `if (e.target === host) return close()`——
 点一下窗口外的暗色区域就整个消失，很容易误关。
 
-`floatwin.js::makeDraggable(panel, handle, key)` 统一处理：
+v0.9.1 先把「点遮罩关闭」整个删掉，只留 `x` / Esc。但这又走到另一个极端：
+浮层打开时整窗接管鼠标（4.3.2 的穿透逻辑），遮罩外点哪儿都没反应，
+桌面等于被一块透明板锁死。v0.9.8 改回「点遮罩关闭」，并用「按下位置」防误关。
 
-- **拖动**：从标题栏 `mousedown` 起，用 `transform: translate(x,y)` 做偏移，
-  不改布局、不动居中基准。位置按 `fy.float.<key>` 存在 `localStorage`，
-  关掉再开还在上次的地方；不写进 `config.json`，避免配置被窗口坐标污染。
-- **跳过交互元素**：`button, a, input, textarea, select, label, [data-act]` 上
-  不起拖，材质按钮 / 关闭按钮 / 搜索框照常可点。
-- **宽松边界**：偏移不超过半屏减一点，窗口不会整块飞出视口。
-- **关闭**：删掉两处点遮罩 `close()`；只有右上角 `x`、Esc、弹窗「取消」才关。
-  天气地区弹窗补了 `.modal-x`，与另外两个窗口一致。
-- 拖动期间 `document.body.style.userSelect = 'none'`，结束恢复，
-  免得标题文字被选中成一片蓝。
+`floatwin.js` 里两个工具：
+
+- `makeDraggable(panel, handle, key)`：从标题栏 `mousedown` 起，用
+  `transform: translate(x,y)` 做偏移，不改布局、不动居中基准。位置按
+  `fy.float.<key>` 存 `localStorage`，关掉再开还在上次的地方；不写进
+  `config.json`，避免配置被窗口坐标污染。跳过 `button, a, input, textarea,
+  select, label, [data-act]`，材质按钮 / 关闭按钮 / 搜索框照常可点。
+- `closeOnBackdrop(host, close)`：点遮罩关闭，但只认**按下的地方就是遮罩**
+  的那一次点击——从面板里按下、拖到遮罩上松手（拖标题栏、选中文字）时
+  标记为 false，不会误关。`x` / Esc / 弹窗「取消」照旧。
+
+拖动期间 `document.body.style.userSelect = 'none'`，结束恢复，免得标题文字
+被选中成一片蓝。天气地区弹窗补了 `.modal-x`，与另外两个窗口一致。
 
 ### 4.4 分组的格子系统
 
@@ -634,6 +639,14 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     - 文件夹的 `/n,<path>` 有同样的引号问题，一并改成 `/n,"<path>"`。
     验证手段：`FY_REVEAL_PATH=<含空格的 .lnk>` 起程序，看 `launch.log` 里
     `reveal … → Ok`，且没有新窗口落在文档。
+
+39. **`#traymenu` 是铺满全屏的容器，`host.contains(e.target)` 恒为真** → 托盘菜单
+    点哪儿都收不回，一直挂在桌面上。判断要落在 `.tm` 菜单盒上。另外点击**别的应用
+    / 任务栏**时我们窗口根本收不到事件（桌面层 + 不激活），只靠前端 `mousedown`
+    兜不住：把菜单矩形用 `set_menu_rect` 报给后端，`spawn_hit_guard` 的 30ms 轮询
+    顺带读 `GetAsyncKeyState(VK_LBUTTON)`，在菜单外按下就 `emit("menu:outside")`。
+    注意菜单刚弹出的那一拍左键可能还按着（托盘那一下），要先看到一次抬起再开始判，
+    否则菜单会立刻把自己关掉。
 
 ## 10. 后续路线
 
