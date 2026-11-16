@@ -36,3 +36,6 @@ src-tauri/gen/
 
 # 签名证书指纹（本机）
 src-tauri/scripts/sign.env.json
+.workbuddy/glass_preview/
+.workbuddy/glass_check*.png
+.workbuddy/glass_desktop*.png
