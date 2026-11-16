@@ -126,12 +126,10 @@ pub fn run() {
             // 默认穿透，光标压到卡片上才由守卫线程接管
             let _ = win.set_ignore_cursor_events(true);
 
-            // 让窗口对截图隐形，抓底图时就不会拍到自己。
-            // FY_NO_EXCLUDE=1 用于排查：确认「肉眼看不到」是渲染问题还是截图排除。
-            let hwnd = commands::hwnd_of(&win);
-            if std::env::var("FY_NO_EXCLUDE").is_err() {
-                desktop::glass::exclude_from_capture(hwnd);
-            }
+            // 注意：这里**不能**给窗口设 WDA_EXCLUDEFROMCAPTURE。
+            // 那个开关是「对所有截图工具隐形」，常开的话用户一截图组件就消失
+            // （v0.9.2 修的 bug）。窗口默认对截图可见；只有抓玻璃底图的
+            // 那 ~100ms 由 glass::snapshot 自己瞬时开关（见 glass.rs）。
 
             tray::create(app.handle())?;
 

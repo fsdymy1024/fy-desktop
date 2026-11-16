@@ -4,8 +4,11 @@
 //! 所以 v0.1 只能拿噪点假装磨砂。这里的做法是把桌面真实像素抓下来，
 //! 模糊后交给前端当每张卡片的背景 —— 卡片下面是什么，透出来的就是什么。
 //!
-//! 关键一步是 `WDA_EXCLUDEFROMCAPTURE`：让窗口对截图 API 隐形，
-//! 于是 BitBlt 拍到的是纯桌面，不需要「隐藏窗口→截图→显示窗口」的闪烁。
+//! 「不含自己」靠 `WDA_EXCLUDEFROMCAPTURE` 实现：BitBlt 拍到的就是纯桌面，
+//! 不需要「隐藏窗口→截图→显示窗口」的闪烁。但它**只能抓底图的那一瞬间开**——
+//! v0.9.2 之前是常开的，结果 Windows 截图工具 / PrintScreen / 第三方截图
+//! 全都拍不到小组件（用户视角：一截图组件就消失）。现在的规则：
+//! 窗口默认 `WDA_NONE`（任何截图都能拍到），抓底图前后临时切换、抓完立刻还原。
 
 use base64::Engine;
 
@@ -17,23 +20,31 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WDA_NONE,
 };
 
-/// 让窗口从截图里消失。抓底图前必须调，否则每张卡片都会透出自己。
+/// 抓底图前把自己从截图里排除，抓完立刻还原。
+/// 返回值是「这次有没有开排除」——调用方只在开过的情况下才需要关。
+/// 排除生效要等 DWM 合成一帧，所以开完睡一小拍再 BitBlt，
+/// 否则抓到的还是「窗口没被排除」的上一帧。
 #[cfg(windows)]
-pub fn exclude_from_capture(hwnd: isize) {
+fn exclude_for_grab(hwnd: isize) {
     unsafe {
         let _ = SetWindowDisplayAffinity(HWND(hwnd as *mut _), WDA_EXCLUDEFROMCAPTURE);
     }
+    std::thread::sleep(std::time::Duration::from_millis(150));
 }
 
+/// 还原为「任何截图工具都能拍到窗口」的默认状态。
 #[cfg(windows)]
-fn toggle_affinity(hwnd: isize, exclude: bool) {
+fn include_back(hwnd: isize) {
     unsafe {
-        let _ = SetWindowDisplayAffinity(
-            HWND(hwnd as *mut _),
-            if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE },
-        );
+        let _ = SetWindowDisplayAffinity(HWND(hwnd as *mut _), WDA_NONE);
     }
 }
+
+#[cfg(not(windows))]
+fn exclude_for_grab(_hwnd: isize) {}
+
+#[cfg(not(windows))]
+fn include_back(_hwnd: isize) {}
 
 #[cfg(windows)]
 fn grab_screen(scale_down: u32, sigma: f32, raw: bool) -> Result<Vec<u8>, String> {
@@ -135,15 +146,17 @@ fn grab_screen(scale_down: u32, sigma: f32, raw: bool) -> Result<Vec<u8>, String
 
 /// 抓桌面底图，返回 data URL。
 ///
-/// `include_window = true` 时临时关掉截图排除，用于自检截图（要看见窗口本身）。
+/// `include_window = true` 用于自检截图（要看见窗口本身）：窗口默认就对截图
+/// 可见，什么都不用切。`include_window = false` 才是给玻璃底图用的：
+/// 瞬时排除自己 → BitBlt → 立刻还原，全程只有 ~100ms。
 #[cfg(windows)]
 pub fn snapshot(hwnd: isize, include_window: bool) -> Result<String, String> {
-    if include_window {
-        toggle_affinity(hwnd, false);
+    if !include_window {
+        exclude_for_grab(hwnd);
     }
     let result = grab_screen(3, 13.0, false);
-    if include_window {
-        toggle_affinity(hwnd, true);
+    if !include_window {
+        include_back(hwnd);
     }
     let png = result?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(png);
@@ -153,16 +166,12 @@ pub fn snapshot(hwnd: isize, include_window: bool) -> Result<String, String> {
 /// 原始像素（不模糊），供自检截图使用
 #[cfg(windows)]
 pub fn raw_png(hwnd: isize, include_window: bool) -> Result<Vec<u8>, String> {
-    if include_window {
-        toggle_affinity(hwnd, false);
-        // DWM 要合成一帧之后窗口才会重新出现在截图里。
-        // 取消排除后立刻 BitBlt，抓到的还是「窗口仍然隐形」的上一帧，
-        // 表现就是偶尔截出来的图上一个组件都没有。
-        std::thread::sleep(std::time::Duration::from_millis(180));
+    if !include_window {
+        exclude_for_grab(hwnd);
     }
     let result = grab_screen(1, 0.0, true);
-    if include_window {
-        toggle_affinity(hwnd, true);
+    if !include_window {
+        include_back(hwnd);
     }
     result
 }
@@ -176,9 +185,6 @@ pub fn raw_png(_hwnd: isize, _include_window: bool) -> Result<Vec<u8>, String> {
 pub fn snapshot(_hwnd: isize, _include_window: bool) -> Result<String, String> {
     Err("仅支持 Windows".into())
 }
-
-#[cfg(not(windows))]
-pub fn exclude_from_capture(_hwnd: isize) {}
 
 /* ===================== 干净截图辅助 =====================
    自检截图时，桌面上往往还开着别的窗口，挡住小组件。
