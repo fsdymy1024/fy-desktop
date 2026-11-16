@@ -972,8 +972,10 @@ function updateHit() {
   if (bar && !bar.hidden) push(bar);
   const menu = $('#menu');
   if (menu && !menu.hidden) push(menu);
+  const trayMenu = $('#traymenu');
+  if (trayMenu && !trayMenu.hidden) push(trayMenu.firstElementChild || trayMenu);
 
-  const force = S.edit || S.force || !!S.gallery || !!S.about || (menu && !menu.hidden);
+  const force = S.edit || S.force || !!S.gallery || !!S.about || S.trayMenu || (menu && !menu.hidden);
   invoke('set_hit_regions', { rects, force: !!force }).catch(() => {});
 }
 
@@ -1297,6 +1299,137 @@ function bindGlobalEvents() {
     if (e.payload === 'place') pickPlace();
     if (e.payload === 'glass') {
       loadGlass();
+    }
+  });
+
+  // ---- 托盘自绘菜单 ----
+  // 原生 Win32 托盘菜单的字体和配色是系统样式，没法跟随材质、也用不上
+  // 组件的 MiSans。托盘点击只把图标位置发过来（tray:open-menu），
+  // 菜单本体在 #traymenu：配色走 --pop-*（跟着全局材质变），
+  // 字体走 --font（跟组件一致）。动作复用现有命令与面板。
+  listen('tray:open-menu', (e) => {
+    if (e.payload && typeof e.payload.x === 'number') openTrayMenu(e.payload);
+  });
+
+  const trayHost = $('#traymenu');
+  let trayMenuOpen = false;
+
+  const closeTrayMenu = () => {
+    if (!trayMenuOpen) return;
+    trayMenuOpen = false;
+    trayHost.hidden = true;
+    S.trayMenu = false;
+    S.force = false;
+    document.removeEventListener('mousedown', trayOutside, true);
+    document.removeEventListener('keydown', trayEsc, true);
+    updateHit();
+  };
+
+  const trayOutside = (e) => {
+    if (!trayHost.contains(e.target)) closeTrayMenu();
+  };
+  const trayEsc = (e) => {
+    if (e.key === 'Escape') closeTrayMenu();
+  };
+
+  function openTrayMenu(rect) {
+    closeTrayMenu();
+    const tick = '<span class="tm-tick" aria-hidden="true">✓</span>';
+    trayHost.innerHTML = `<div class="tm" role="menu">
+      <button class="tm-item" data-act="gallery" role="menuitem">${tick}添加组件…</button>
+      <button class="tm-item" data-act="glass" role="menuitem">${tick}刷新桌面底图</button>
+      <button class="tm-item" data-act="place" role="menuitem">${tick}天气地区…</button>
+      <button class="tm-item check" data-act="autostart" aria-checked="${!!S.cfg.autostart}" role="menuitemcheckbox">${tick}开机自启</button>
+      <button class="tm-item check" data-act="seconds" aria-checked="${S.cfg.show_seconds !== false}" role="menuitemcheckbox">${tick}时钟显示秒</button>
+      <div class="tm-sep"></div>
+      <button class="tm-item" data-act="root" role="menuitem">${tick}打开收纳文件夹</button>
+      <button class="tm-item" data-act="conf" role="menuitem">${tick}设置文件…</button>
+      <div class="tm-sep"></div>
+      <button class="tm-item" data-act="about" role="menuitem">${tick}关于 fy-desktop…</button>
+      <button class="tm-item danger" data-act="quit" role="menuitem">${tick}退出 fy-desktop</button>
+    </div>`;
+
+    // 定位：贴着托盘图标弹。rect 是图标的物理坐标，换算成 CSS 像素。
+    const d = dpr();
+    const iconRight = (rect.x + (rect.w || 0)) / d;
+    const iconTop = rect.y / d;
+    const iconBottom = (rect.y + (rect.h || 0)) / d;
+    const tm = trayHost.firstElementChild;
+    if (iconTop > window.innerHeight / 2) {
+      // 底部任务栏（绝大多数场景）：菜单向上弹，底边贴图标顶
+      tm.style.top = '';
+      tm.style.bottom = `${Math.max(8, window.innerHeight - iconTop + 8)}px`;
+    } else {
+      // 顶部任务栏：向下弹
+      tm.style.bottom = '';
+      tm.style.top = `${iconBottom + 8}px`;
+    }
+    tm.style.right = `${Math.max(8, window.innerWidth - iconRight + 4)}px`;
+
+    trayMenuOpen = true;
+    trayHost.hidden = false;
+    S.trayMenu = true;
+    // 菜单开着时整窗必须可点（平时穿透）：updateHit 的 force 会放行
+    S.force = true;
+    updateHit();
+    // 托盘点击本身不在文档流里，mousedown 监听下一拍再挂也无妨；
+    // 用捕获阶段，防止菜单内按钮的 mousedown 冒泡误关
+    setTimeout(() => document.addEventListener('mousedown', trayOutside, true), 0);
+    document.addEventListener('keydown', trayEsc, true);
+  }
+
+  trayHost.addEventListener('click', async (e) => {
+    if (!trayMenuOpen) return;
+    const btn = e.target.closest('.tm-item');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    switch (act) {
+      case 'gallery':
+        closeTrayMenu();
+        openGal();
+        break;
+      case 'glass':
+        closeTrayMenu();
+        loadGlass();
+        break;
+      case 'place':
+        closeTrayMenu();
+        pickPlace();
+        break;
+      case 'about':
+        closeTrayMenu();
+        openAboutPanel();
+        break;
+      case 'root':
+        closeTrayMenu();
+        invoke('open_root').catch(() => {});
+        break;
+      case 'conf':
+        closeTrayMenu();
+        invoke('open_config_dir').catch(() => {});
+        break;
+      case 'quit':
+        invoke('quit_app');
+        break;
+      case 'autostart': {
+        // 勾选切换不关菜单，和原生勾选菜单的行为一致
+        try {
+          const after = await invoke('set_autostart', { on: !S.cfg.autostart });
+          S.cfg.autostart = !!after;
+          btn.setAttribute('aria-checked', String(!!after));
+          save();
+        } catch {}
+        break;
+      }
+      case 'seconds': {
+        const next = !(S.cfg.show_seconds !== false);
+        S.cfg.show_seconds = next;
+        setShowSeconds(next);
+        for (const inst of S.mounted.values()) inst?.tick?.();
+        btn.setAttribute('aria-checked', String(next));
+        save();
+        break;
+      }
     }
   });
 

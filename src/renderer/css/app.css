@@ -1718,6 +1718,71 @@ body[data-edit="1"] .grip {
   color: var(--pop-ink3, rgba(26, 22, 19, 0.4));
 }
 
+/* ---- 托盘自绘菜单 ----
+   原生 Win32 托盘菜单改掉了：系统样式的字体（微软雅黑）和配色既跟组件的
+   MiSans 对不上，也没法跟随材质。#traymenu 是全屏透明层，菜单盒 .tm 用和
+   右键菜单同一族视觉（--pop-* 跟材质走，--font 跟组件走）。 */
+#traymenu {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+}
+
+#traymenu[hidden] {
+  display: none;
+}
+
+#traymenu .tm {
+  position: absolute;
+  min-width: 176px;
+  padding: 5px;
+  border-radius: 11px;
+  background: var(--pop-bg, rgba(255, 252, 248, 0.97));
+  border: 1px solid var(--pop-bd, rgba(120, 90, 70, 0.12));
+  box-shadow: 0 22px 40px -22px rgba(20, 12, 6, 0.8);
+  font-family: var(--font);
+}
+
+#traymenu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  color: var(--pop-ink, rgba(26, 22, 19, 0.78));
+  text-align: left;
+  white-space: pre;
+}
+
+#traymenu button:hover {
+  background: var(--pop-hover, rgba(226, 98, 44, 0.12));
+  color: var(--pop-ink-hl, #b8461a);
+}
+
+/* 勾选项：勾选符号占一个固定宽位，没勾时占位不显示 */
+#traymenu .tm-tick {
+  flex: 0 0 auto;
+  width: 13px;
+  font-size: 10px;
+  visibility: hidden;
+}
+
+#traymenu button[aria-checked="true"] .tm-tick {
+  visibility: visible;
+}
+
+#traymenu .tm-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--pop-line, rgba(120, 90, 70, 0.1));
+}
+
+#traymenu .danger:hover {
+  color: #ff8a5e;
+}
+
 #toast {
   position: fixed;
   left: 50%;
