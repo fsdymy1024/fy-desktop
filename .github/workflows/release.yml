@@ -87,9 +87,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # release 名取 tauri.conf.json 的版本号（tag 发版时与本 tag 一致）
-          tagName: v{{version}}
-          releaseName: 'fy-desktop v{{version}}'
+          # 占位符是 tauri-action 的 __VERSION__（会被 tauri.conf.json 的 version 替换）。
+          # 别写成 {{version}}——那是字面量，会原样变成 tag 名，
+          # 应用内「检查更新」按 tag 解析版本时就会永远判不出新版本。
+          tagName: v__VERSION__
+          releaseName: 'fy-desktop v__VERSION__'
           releaseBody: '桌面玻璃小组件与快捷方式收纳。更新内容见 [CHANGELOG.md](https://github.com/fsdymy1024/fy-desktop/blob/main/CHANGELOG.md)。'
           # 应用内检查更新查的是 releases/latest，必须正式发布，不能 draft
           releaseDraft: false

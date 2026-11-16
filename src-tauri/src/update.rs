@@ -58,6 +58,49 @@ fn newer(latest: &str, current: &str) -> bool {
     false
 }
 
+/// 把 tag 洗成 `0.9.7` 这种纯数字点。`v` 前缀、`-beta` 后缀都丢掉；
+/// 洗不出版本号（比如 Actions 模板没替换，tag 是 `v{{version}}`）就返回空串。
+fn clean_version(tag: &str) -> String {
+    let core = tag
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    let ok = core.split('.').count() >= 2
+        && core
+            .split('.')
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    if ok {
+        core.to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// 从安装包文件名里取版本：`fy-desktop_0.9.7_x64-setup.exe` → `0.9.7`。
+///
+/// 打包器拼出来的名字一定和 exe 对得上，比手写的 tag 更可信——GitHub Actions
+/// 的 `tagName` 模板没替换时 tag 会是 `v{{version}}` 字面量，只认 tag 的话
+/// 「检查更新」永远判不出新版本。
+fn version_from_name(name: &str) -> String {
+    let spaced: String = name
+        .chars()
+        .map(|c| if c.is_ascii_digit() || c == '.' { c } else { ' ' })
+        .collect();
+    spaced
+        .split_whitespace()
+        .map(|s| s.trim_matches('.'))
+        .find(|s| {
+            s.split('.').count() >= 3
+                && s.split('.')
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        })
+        .unwrap_or_default()
+        .to_string()
+}
+
 pub async fn check() -> Update {
     let current = env!("CARGO_PKG_VERSION").to_string();
     let mut out = Update {
@@ -110,7 +153,36 @@ pub async fn check() -> Update {
     };
 
     let tag = body.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
-    out.latest = tag.trim_start_matches(['v', 'V']).to_string();
+    let assets = body
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let name_of = |a: &serde_json::Value| {
+        a.get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    // 版本号优先取安装包文件名（理由见 version_from_name），tag 只作兜底
+    let asset_ver = assets
+        .iter()
+        .map(|a| version_from_name(&name_of(a)))
+        .find(|v| !v.is_empty())
+        .unwrap_or_default();
+    let tag_ver = clean_version(tag);
+    out.latest = if asset_ver.is_empty() {
+        tag_ver.clone()
+    } else {
+        asset_ver
+    };
+    if !out.latest.is_empty() && tag_ver != out.latest {
+        eprintln!(
+            "[update] release tag 是 {tag:?}，改按安装包文件名认定 v{}",
+            out.latest
+        );
+    }
     out.page = body
         .get("html_url")
         .and_then(|v| v.as_str())
@@ -130,37 +202,24 @@ pub async fn check() -> Update {
         .take(10)
         .collect();
 
-    // 挑安装包：优先名字里带 setup 的 .exe，没有再退回第一个 .exe
-    let assets = body
-        .get("assets")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let pick = |needle: &str| {
-        assets
-            .iter()
-            .find(|a| {
-                a.get("name")
-                    .and_then(|v| v.as_str())
-                    .map(|n| n.ends_with(".exe") && n.contains(needle))
-                    .unwrap_or(false)
-            })
-            .and_then(|a| a.get("browser_download_url").and_then(|v| v.as_str()))
-            .map(|s| s.to_string())
-    };
-    out.asset = pick("setup")
-        .or_else(|| pick(""))
-        .unwrap_or_default();
-    out.size = assets
+    // 挑安装包：优先「文件名版本 = 最新版 + 带 setup」，再退到任意 setup，最后任意 exe。
+    // 只有版本对得上的包才不会出现「提示 0.9.8、装上去还是 0.9.7」。
+    let latest = out.latest.clone();
+    let is_exe = |a: &serde_json::Value| name_of(a).to_ascii_lowercase().ends_with(".exe");
+    let is_setup = |a: &serde_json::Value| is_exe(a) && name_of(a).contains("setup");
+    let chosen = assets
         .iter()
-        .find(|a| {
-            a.get("browser_download_url")
-                .and_then(|v| v.as_str())
-                .map(|u| u == out.asset)
-                .unwrap_or(false)
-        })
-        .and_then(|a| a.get("size").and_then(|v| v.as_u64()))
-        .unwrap_or(0);
+        .find(|a| is_setup(a) && version_from_name(&name_of(a)) == latest)
+        .or_else(|| assets.iter().find(|a| is_setup(a)))
+        .or_else(|| assets.iter().find(|a| is_exe(a)));
+    if let Some(a) = chosen {
+        out.asset = a
+            .get("browser_download_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        out.size = a.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+    }
 
     out.has_update = !out.latest.is_empty() && newer(&out.latest, &current);
     out
@@ -199,7 +258,11 @@ async fn tokio_sleep(d: Duration) {
 }
 
 /// 下载安装包到临时目录，返回文件路径。
-pub async fn download(asset: &str, version: &str) -> Result<String, String> {
+///
+/// 流式写盘，每 ~120ms 推一次 `update:download`（已下载 / 总大小），关于页据此
+/// 画进度——慢网下 2MB 也要十几秒，没有反馈用户会以为卡死了。下载不完整就删掉
+/// 残包，别把一个半截 exe 交给安装程序。
+pub async fn download(app: &AppHandle, asset: &str, version: &str) -> Result<String, String> {
     if asset.is_empty() {
         return Err("这个版本没有提供 exe 安装包".into());
     }
@@ -207,7 +270,7 @@ pub async fn download(asset: &str, version: &str) -> Result<String, String> {
         .timeout(Duration::from_secs(180))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client
+    let mut resp = client
         .get(asset)
         .header("User-Agent", UA)
         .send()
@@ -216,15 +279,56 @@ pub async fn download(asset: &str, version: &str) -> Result<String, String> {
     if !resp.status().is_success() {
         return Err(format!("下载失败：HTTP {}", resp.status()));
     }
-    let bytes = resp.bytes().await.map_err(|e| format!("下载中断：{e}"))?;
+    let total = resp.content_length().unwrap_or(0);
     let path = std::env::temp_dir().join(format!("fy-desktop_{version}_x64-setup.exe"));
-    std::fs::write(&path, &bytes).map_err(|e| format!("写文件失败：{e}"))?;
+    let mut file = std::fs::File::create(&path).map_err(|e| format!("写文件失败：{e}"))?;
+
+    use std::io::Write;
+    let mut got: u64 = 0;
+    let mut last = std::time::Instant::now();
+    loop {
+        let chunk = match resp.chunk().await {
+            Ok(Some(c)) => c,
+            Ok(None) => break,
+            Err(e) => {
+                drop(file);
+                let _ = std::fs::remove_file(&path);
+                return Err(format!("下载中断：{e}"));
+            }
+        };
+        if let Err(e) = file.write_all(&chunk) {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+            return Err(format!("写文件失败：{e}"));
+        }
+        got += chunk.len() as u64;
+        if last.elapsed() >= Duration::from_millis(120) {
+            last = std::time::Instant::now();
+            let _ = app.emit(
+                "update:download",
+                serde_json::json!({ "downloaded": got, "total": total, "done": false }),
+            );
+        }
+    }
+    let _ = file.sync_all();
+    drop(file);
+    let _ = app.emit(
+        "update:download",
+        serde_json::json!({ "downloaded": got, "total": total, "done": true }),
+    );
+    if total > 0 && got != total {
+        let _ = std::fs::remove_file(&path);
+        return Err(format!("下载不完整：{got}/{total} 字节"));
+    }
     Ok(path.to_string_lossy().to_string())
 }
 
 /// 跑安装包（`/S` 静默），然后退出自己——不然安装程序动不了正在运行的 exe。
 pub fn run_installer(path: &str) -> Result<(), String> {
     use std::process::Command;
+    if !std::path::Path::new(path).exists() {
+        return Err("安装包不见了，请重新下载".into());
+    }
     let mut cmd = Command::new(path);
     cmd.arg("/S");
     #[cfg(windows)]
@@ -234,4 +338,38 @@ pub fn run_installer(path: &str) -> Result<(), String> {
     }
     cmd.spawn().map_err(|e| format!("启动安装包失败：{e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tag_clean_rejects_template() {
+        assert_eq!(clean_version("v0.9.7"), "0.9.7");
+        assert_eq!(clean_version("0.9.7"), "0.9.7");
+        assert_eq!(clean_version("v0.9.7-beta.1"), "0.9.7");
+        // Actions 的 tagName 模板没替换时会变成这种字面量，必须判成无效
+        assert_eq!(clean_version("v{{version}}"), "");
+        assert_eq!(clean_version("v__VERSION__"), "");
+        assert_eq!(clean_version(""), "");
+    }
+
+    #[test]
+    fn asset_name_carries_version() {
+        assert_eq!(version_from_name("fy-desktop_0.9.7_x64-setup.exe"), "0.9.7");
+        assert_eq!(
+            version_from_name("fy-desktop_0.10.12_x64-setup.exe"),
+            "0.10.12"
+        );
+        assert_eq!(version_from_name("fy-desktop.exe"), "");
+    }
+
+    #[test]
+    fn version_compare() {
+        assert!(newer("0.9.10", "0.9.9"));
+        assert!(newer("0.10.0", "0.9.9"));
+        assert!(!newer("0.9.7", "0.9.7"));
+        assert!(!newer("0.9.6", "0.9.7"));
+    }
 }

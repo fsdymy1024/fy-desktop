@@ -376,9 +376,14 @@ pub async fn check_update() -> Update {
 }
 
 /// 下载安装包。返回本地路径，前端拿到之后再问用户要不要现在装。
+/// 下载过程会持续 emit `update:download`，关于页拿它画进度条。
 #[tauri::command]
-pub async fn download_update(asset: String, version: String) -> Result<String, String> {
-    update::download(&asset, &version).await
+pub async fn download_update(
+    app: AppHandle,
+    asset: String,
+    version: String,
+) -> Result<String, String> {
+    update::download(&app, &asset, &version).await
 }
 
 /// 拉起安装程序并退出。装完由安装包自己重启（NSIS 的 run-after-install）。

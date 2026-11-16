@@ -6,7 +6,7 @@
  * 后端会带回一条 error，这里照实显示，不要假装「已是最新」。
  */
 
-import { invoke } from './bridge.js';
+import { invoke, listen } from './bridge.js';
 import { makeDraggable, closeOnBackdrop } from './floatwin.js';
 
 const REPO = 'https://github.com/fsdymy1024/fy-desktop';
@@ -124,7 +124,7 @@ export function openAbout(host, opts) {
       found = u;
       const notes = plain(u.notes);
       setState(`
-        <span class="new">发现新版本 v${esc(u.latest)}</span>
+        <span class="new">发现新版本 v${esc(u.latest)}${u.published ? ` · ${esc(u.published)}` : ''}</span>
         ${notes ? `<span class="notes">${esc(notes)}</span>` : ''}
         <span class="acts">
           ${
@@ -149,6 +149,20 @@ export function openAbout(host, opts) {
       btn.disabled = true;
       btn.textContent = '正在下载…';
     }
+
+    // 后端流式下载，每 120ms 推一次已下载字节数——慢网下没有进度会像卡死
+    const un = await listen('update:download', ({ payload }) => {
+      const p = payload || {};
+      const pct = p.total ? Math.min(100, Math.round((p.downloaded / p.total) * 100)) : 0;
+      const right = p.total
+        ? `${pct}% · ${sizeText(p.downloaded)} / ${sizeText(p.total)}`
+        : sizeText(p.downloaded);
+      setState(`
+        <span class="ok">正在下载 v${esc(found.latest)}</span>
+        <i class="dl-bar"><b style="width:${p.done ? 100 : pct}%"></b></i>
+        <span class="dl-note">${right}</span>`);
+    }).catch(() => null);
+
     try {
       setState(`正在下载 v${esc(found.latest)} 安装包…`);
       const path = await invoke('download_update', { asset: found.asset, version: found.latest });
@@ -159,6 +173,8 @@ export function openAbout(host, opts) {
         `<span class="bad">更新失败：${esc(e?.message || e)}</span>
          <span class="acts"><button class="abbtn" data-act="page">改为手动下载</button></span>`
       );
+    } finally {
+      un?.();
     }
   }
 
