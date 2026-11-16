@@ -1476,12 +1476,12 @@ body[data-edit="1"] .grip {
 }
 
 .matbtn[data-mat="glass"] i {
-  /* 液态玻璃预览：透膜 + 左上顶光 + 顶部亮边 */
+  /* 深色玻璃预览（demo 材质）：深蓝黑透膜 + 左上顶光 + 淡蓝白亮边 */
   background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.15) 45%, rgba(255, 255, 255, 0) 60%),
-    linear-gradient(145deg, #f3e8db 0%, #d9c6b2 55%, #b9a48f 100%);
-  border-color: rgba(255, 255, 255, 0.75);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(255, 255, 255, 0.35);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.05) 45%, rgba(255, 255, 255, 0) 60%),
+    linear-gradient(145deg, #2c3850 0%, #1b2536 55%, #101828 100%);
+  border-color: rgba(172, 206, 255, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .matbtn[data-mat="dusk"] i {
@@ -1721,6 +1721,82 @@ body[data-edit="1"] .grip {
    材质
    ========================================================================== */
 
+/* 玻璃（按用户 demo 定稿）：深色玻璃——深蓝黑基调，透出压暗的底图，
+   全浅色文字，一圈细的淡蓝白亮边，左上一道轻顶光，无浓光晕。
+   demo 的关键和「白雾玻璃」相反：膜是深色的，卡面颜色 = 背景被压暗后的颜色，
+   所以任何壁纸上都是深玻璃 + 白字，可读性天然稳（即 Atrium「暮色」的逻辑）。 */
+body[data-material="glass"],
+.card[data-material="glass"] {
+  --ink: rgba(236, 242, 250, 0.95);
+  --ink2: rgba(236, 242, 250, 0.66);
+  --ink3: rgba(236, 242, 250, 0.45);
+  --line: rgba(255, 255, 255, 0.10);
+  --fill: rgba(16, 24, 38, 0.62);
+  --fill-2: rgba(16, 24, 38, 0.76);
+  /* 深色膜压在模糊底图上：底图透出但被压暗，卡面颜色跟着壁纸跑 */
+  --veil: rgba(10, 18, 30, 0.42);
+  --stroke: rgba(172, 206, 255, 0.30);
+  /* 顶光很轻（demo 左上只有一道淡淡的斜光） */
+  --sheen-hi: rgba(255, 255, 255, 0.16);
+  --sheen-mid: rgba(255, 255, 255, 0.05);
+  --halo: 0 1px 6px rgba(0, 0, 0, 0.30), 0 0 2px rgba(0, 0, 0, 0.24);
+  /* 边缘：顶亮线为主，四周一圈极淡的蓝白微光；色散弱到几乎不可见 */
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.30),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    inset 1px 0 0 rgba(255, 255, 255, 0.12),
+    inset -1px 0 0 rgba(255, 255, 255, 0.12),
+    inset 0 1px 1px rgba(150, 190, 255, 0.05),
+    inset 0 -1px 1px rgba(110, 150, 255, 0.05);
+  --shadow: 0 20px 44px -26px rgba(0, 0, 0, 0.78), 0 3px 8px -4px rgba(0, 0, 0, 0.45);
+  /* 浮层（右键菜单 / 编辑条 / 弹层）走深色，浅玻璃时代的白弹层不再出现 */
+  --pop-bg: rgba(26, 34, 48, 0.985);
+  --pop-bd: rgba(255, 255, 255, 0.10);
+  --pop-ink: rgba(238, 243, 250, 0.92);
+  --pop-ink2: rgba(238, 243, 250, 0.58);
+  --pop-ink3: rgba(238, 243, 250, 0.38);
+  --pop-line: rgba(255, 255, 255, 0.10);
+  --pop-hover: rgba(140, 190, 255, 0.14);
+  --pop-ink-hl: #8cbcfa;
+  --pop-btn: rgba(255, 255, 255, 0.09);
+  --pop-btn-hover: rgba(255, 255, 255, 0.16);
+  --pop-field: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+}
+
+/* 玻璃卡的内部小件（格子 / 按钮 / 进度条）换深色版：
+   全局这些是为浅玻璃设计的（白色半透明块），深玻璃上 hover 会闪白块。 */
+body[data-material="glass"] .panel .cell,
+.card[data-material="glass"] .cell {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+body[data-material="glass"] .panel .cell:hover,
+.card[data-material="glass"] .cell:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+body[data-material="glass"] .panel .iconbtn,
+body[data-material="glass"] .panel .ghost,
+body[data-material="glass"] .panel .net-link,
+.card[data-material="glass"] .iconbtn,
+.card[data-material="glass"] .ghost,
+.card[data-material="glass"] .net-link {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+body[data-material="glass"] .panel .bar,
+.card[data-material="glass"] .bar {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+body[data-material="glass"] .panel .cell.empty .ic,
+.card[data-material="glass"] .cell.empty .ic {
+  background: rgba(255, 255, 255, 0.04);
+}
+
 /* 暮色：底图压暗，文字转浅。
    变量同时挂到卡片自身（.card[data-material]）——每张卡按自己的材质上色，
    body 那条只管收纳面板 / 弹层这些跟随全局的表面。 */
@@ -1795,78 +1871,27 @@ body[data-material="dusk"] .bar {
   background: rgba(255, 255, 255, 0.12);
 }
 
-/* ---- 自适应明暗（v0.9 请回 0.7 的观感，但做成组件级）----
-   壁纸偏暗时，玻璃翻成深玻璃 + 浅字，和 0.7 一样。关键区别：只作用于
-   「玻璃材质」的表面——暮色卡、石墨卡的材质是用户明确选的，不受壁纸亮度
-   影响。0.8 曾整套删掉（那时只有全局材质，暗壁纸会把玻璃翻成石墨，用户
-   以为材质选择器坏了）；现在每张卡自带 data-material，可以精确放行。 */
+/* ---- 自适应明暗 ----
+   玻璃已经是深色玻璃（demo 材质），整屏的 tone 自适应不再决定玻璃的明暗，
+   只在壁纸偏暗时把玻璃再压深一档、边光收得更弱，让卡和暗壁纸仍分得开层次。
+   只作用于「玻璃材质」的表面——暮色卡、石墨卡的材质是用户明确选的，
+   不受壁纸亮度影响。 */
 
 body[data-tone="dark"] .card[data-material="glass"],
 body[data-tone="dark"][data-material="glass"] .panel {
-  --ink: rgba(255, 251, 246, 0.95);
-  --ink2: rgba(255, 251, 246, 0.68);
-  --ink3: rgba(255, 251, 246, 0.46);
-  --line: rgba(255, 255, 255, 0.12);
-  --fill: rgba(24, 19, 15, 0.66);
-  --fill-2: rgba(24, 19, 15, 0.8);
-  --veil: rgba(20, 15, 11, 0.62);
-  --stroke: rgba(255, 255, 255, 0.16);
+  --fill: rgba(12, 18, 30, 0.72);
+  --fill-2: rgba(12, 18, 30, 0.84);
+  --veil: rgba(8, 14, 24, 0.55);
+  --stroke: rgba(172, 206, 255, 0.24);
   --sheen-hi: rgba(255, 255, 255, 0.12);
-  --sheen-mid: rgba(255, 255, 255, 0.03);
-  --halo: 0 1px 6px rgba(0, 0, 0, 0.34), 0 0 2px rgba(0, 0, 0, 0.28);
-  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
-    inset 1px 0 0 rgba(255, 255, 255, 0.08),
-    inset -1px 0 0 rgba(255, 255, 255, 0.08),
-    inset 0 1px 1px rgba(255, 150, 90, 0.05),
-    inset 0 -1px 1px rgba(110, 150, 255, 0.05);
+  --sheen-mid: rgba(255, 255, 255, 0.04);
   color: var(--ink);
 }
 
-/* 深模式下玻璃层铺的是真实底图——底图若是白纸，白字就没影了，压暗换回对比度 */
+/* 深模式下玻璃层铺的是真实底图——再压一点亮度，保持和深膜之间的层次 */
 body[data-tone="dark"] .card[data-material="glass"]::before,
 body[data-tone="dark"][data-material="glass"] .panel::before {
-  filter: brightness(0.7) saturate(0.88);
-}
-
-body[data-tone="dark"] .card[data-material="glass"] .cell,
-body[data-tone="dark"][data-material="glass"] .panel .cell {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-body[data-tone="dark"] .card[data-material="glass"] .cell:hover,
-body[data-tone="dark"][data-material="glass"] .panel .cell:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.22);
-}
-
-body[data-tone="dark"] .card[data-material="glass"] .iconbtn,
-body[data-tone="dark"] .card[data-material="glass"] .ghost,
-body[data-tone="dark"] .card[data-material="glass"] .net-link,
-body[data-tone="dark"][data-material="glass"] .panel .iconbtn,
-body[data-tone="dark"][data-material="glass"] .panel .ghost,
-body[data-tone="dark"][data-material="glass"] .panel .net-link {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.14);
-}
-
-body[data-tone="dark"] .card[data-material="glass"] .bar,
-body[data-tone="dark"][data-material="glass"] .panel .bar {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-body[data-tone="dark"] .card[data-material="glass"] .shelf-hint,
-body[data-tone="dark"][data-material="glass"] .panel .shelf-hint {
-  padding: 2px 3px 6px;
-  font-size: 9px;
-  color: var(--ink3);
-  letter-spacing: 0.2px;
-}
-
-body[data-tone="dark"] .card[data-material="glass"] .cell.empty .ic,
-body[data-tone="dark"][data-material="glass"] .panel .cell.empty .ic {
-  background: rgba(255, 255, 255, 0.04);
+  filter: brightness(0.82) saturate(0.88);
 }
 
 .cell.empty {
