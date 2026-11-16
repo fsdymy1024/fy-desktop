@@ -6,14 +6,19 @@
 
 import { esc, pad2, speed, spark, wxIcon, WEEK } from './util.js';
 
-/** 预设尺寸（设计像素）。和后端 config.rs 的 A / dims() 是同一套数：
- *  小 a×a、中 2a×a、大 2a×1.5a，a = 120。
+/** 预设尺寸（设计像素）。和后端 config.rs 的 dims() 是同一套数：
+ *  小 102×102、中 210×102、大 210×126。
+ *  宽高都是吸附网格（main.js 的 GRID = 6）的整数倍，且中/大宽度 = 两个小 + 一条缝：
+ *  2 × 102 + 6 = 210，所以两张小卡并排正好和一张中卡同宽、同一条缝。
  *  尺寸不再靠拖拉，一律从这三档里选，组件之间才能对得齐。 */
-export const A = 120;
+export const S = 102;
+/** 最小缝隙，同时也是吸附网格的步进（main.js 的 GRID） */
+export const GAP = 6;
+export const MW = 2 * S + GAP;
 export const SIZE_DIMS = {
-  s: [A, A],
-  m: [A * 2, A],
-  l: [A * 2, A * 1.5]
+  s: [S, S],
+  m: [MW, S],
+  l: [MW, S + 24]
 };
 export const SIZE_LABEL = { s: '小', m: '中', l: '大' };
 export const dimsOf = (size) => SIZE_DIMS[size] || SIZE_DIMS.m;

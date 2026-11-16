@@ -27,7 +27,7 @@ pub static BORN: OnceLock<std::time::Instant> = OnceLock::new();
 pub static UI_READY: AtomicBool = AtomicBool::new(false);
 
 /// 各组件的默认尺寸（设计像素）。
-/// 现在只作为「预设档位」的推导结果存在：小 a×a、中 2a×a、大 2a×1.5a。
+/// 现在只作为「预设档位」的推导结果存在：小 102×102、中 210×102、大 210×126。
 pub fn widget_size(kind: &str) -> (f64, f64) {
     config::dims(config::default_size(kind))
 }

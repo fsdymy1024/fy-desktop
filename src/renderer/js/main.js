@@ -6,7 +6,7 @@
  */
 
 import { invoke, listen, dbg } from './bridge.js';
-import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf } from './widgets.js';
+import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf, GAP } from './widgets.js';
 import { renderOrganizer, groupAtPoint, resetLoose } from './organizer.js';
 import { openGallery } from './gallery.js';
 import { openAbout, updateHint } from './about.js';
@@ -29,6 +29,12 @@ const S = {
   version: '',
   shotMode: false
 };
+
+/* 吸附网格。网格粒度 = 最小缝隙 GAP = 6（widgets.js 导出，和尺寸同源）：
+ * 三档尺寸（102 / 210 / 126）全是它的整数倍，邻卡之间也固定留 GAP，
+ * 所以无论拖动吸附还是自动补位，卡片缝隙都只可能是 6 或它的整数倍。 */
+const GRID = GAP;
+const SNAP_TOL = 6;
 
 /* ============================ 启动 ============================ */
 
@@ -244,7 +250,7 @@ function normalizeSizes() {
     let size = w.size;
     if (!list.includes(size)) {
       // 这一档被砍掉了（v0.7 起除备忘额外取消「大」）：按档位距离就近归位。
-      // 不能按宽高比——240×180 的 ratio 是 1.33，反而更像「小」的 1:1。
+      // 不能按宽高比——210×126 的 ratio 是 1.67，反而更像「小」的 1:1。
       const order = ['s', 'm', 'l'];
       const at = Math.max(0, order.indexOf(size || 'm'));
       size = list.reduce(
@@ -265,23 +271,23 @@ function normalizeSizes() {
     w.y = ny;
   }
 
-  // 旧尺寸是手拉出来的，换成 240 宽后会有卡片互相压住几个像素。
+  // 旧尺寸是手拉出来的，换成 210 宽后会有卡片互相压住几个像素。
   // 让位规则：横着只差一点点就往右挪（保住同一排），差得多才往下挪——
   // 列是用户自己排的，随便拆开会前功尽弃。
   const clash = (a, b) =>
-    a.x < b.x + b.w + 8 && a.x + a.w + 8 > b.x && a.y < b.y + b.h + 8 && a.y + a.h + 8 > b.y;
+    a.x < b.x + b.w + GAP && a.x + a.w + GAP > b.x && a.y < b.y + b.h + GAP && a.y + a.h + GAP > b.y;
   const placed = [];
   for (const w of S.cfg.widgets) {
     let guard = 0;
     while (guard++ < 40) {
       const hit = placed.find((o) => clash(w, o));
       if (!hit) break;
-      const right = hit.x + hit.w + 8;
-      if (right - w.x <= 24 && right + w.w <= S.design.w) w.x = right;
-      else w.y = hit.y + hit.h + 8;
+      const right = hit.x + hit.w + GAP;
+      if (right - w.x <= 3 * GRID && right + w.w <= S.design.w) w.x = right;
+      else w.y = hit.y + hit.h + GAP;
     }
-    w.x = Math.round(w.x / 8) * 8;
-    w.y = Math.round(clamp(w.y, 0, Math.max(0, S.design.h - w.h)) / 8) * 8;
+    w.x = Math.round(w.x / GRID) * GRID;
+    w.y = Math.round(clamp(w.y, 0, Math.max(0, S.design.h - w.h)) / GRID) * GRID;
     placed.push(w);
   }
 
@@ -465,12 +471,11 @@ function setCardMaterial(el, w, material) {
 /* ---- 网格吸附 ----
  *
  * 两个层次：
- * 1) 兜底落 8 设计像素网格，拖出来的坐标不会出现 3px、5px 这种歪数；
+ * 1) 兜底落 GRID 网格，拖出来的坐标不会出现 3px、5px 这种歪数；
  * 2) 优先贴其它卡片的参考线（左/中/右、上/中/下），6px 内直接对齐，
  *    这样不同组件能落在同一条线上，宽高也能对齐成一样。
+ * 缝隙只由 GAP 决定：贴邻卡的「后边」时预留 GAP，同向对齐（左对左）仍贴齐。
  */
-const GRID = 8;
-const SNAP_TOL = 6;
 
 let guides = null;
 function ensureGuides() {
@@ -505,31 +510,42 @@ function hideGuides() {
   g.h.hidden = true;
 }
 
-/** 其它卡片与收纳面板的参考线 */
+/** 其它卡片与收纳面板的参考线。kind 说明这是卡的哪条边，
+ *  吸附时要靠它判断「往邻卡后面接」还是「同向对齐」。 */
 function refLines(exceptId) {
   const xs = [];
   const ys = [];
   for (const o of S.cfg.widgets) {
     if (o.id === exceptId) continue;
-    xs.push(o.x, o.x + o.w / 2, o.x + o.w);
-    ys.push(o.y, o.y + o.h / 2, o.y + o.h);
+    xs.push({ v: o.x, kind: 'left' }, { v: o.x + o.w / 2, kind: 'center' }, { v: o.x + o.w, kind: 'right' });
+    ys.push({ v: o.y, kind: 'top' }, { v: o.y + o.h / 2, kind: 'center' }, { v: o.y + o.h, kind: 'bottom' });
   }
   const org = S.cfg.organizer;
   if (org) {
-    xs.push(org.x, org.x + org.w / 2, org.x + org.w);
-    ys.push(org.y);
+    xs.push({ v: org.x, kind: 'left' }, { v: org.x + org.w / 2, kind: 'center' }, { v: org.x + org.w, kind: 'right' });
+    ys.push({ v: org.y, kind: 'top' });
   }
   return { xs, ys };
 }
 
-/** 起点吸附：card 的左/中/右 三条线各自去贴，取最近的一处 */
+/** 起点吸附：本卡的前边 / 中线 / 后边各自去贴参考线，取最近的一处。
+ *
+ *  前边贴邻卡的「后边」（右边、底边）时预留 GAP，并排两张卡的缝隙因此恒为 GAP；
+ *  后边贴邻卡的「前边」同理。同向对齐（左对左、上对上）仍然贴齐，
+ *  这样一列卡片的边缘能落在同一条线上——缝隙统一，列也整齐。 */
 function snapStart(pos, size, lines) {
   let best = null;
-  for (const off of [0, size / 2, size]) {
-    const at = pos + off;
-    for (const l of lines) {
-      const d = Math.abs(at - l);
-      if (d <= SNAP_TOL && (!best || d < best.d)) best = { d, pos: l - off, line: l };
+  for (const l of lines) {
+    const after = l.kind === 'right' || l.kind === 'bottom';
+    const before = l.kind === 'left' || l.kind === 'top';
+    const targets = [
+      l.v + (after ? GAP : 0), // 本卡前边
+      l.v - size / 2, // 本卡中线
+      l.v - size - (before ? GAP : 0) // 本卡后边
+    ];
+    for (const t of targets) {
+      const d = Math.abs(t - pos);
+      if (d <= SNAP_TOL && (!best || d < best.d)) best = { d, pos: t, line: l.v };
     }
   }
   return best;
@@ -612,14 +628,16 @@ function removeWidget(id) {
 }
 
 function freeSpot(w, h) {
-  const pad = 36;
+  // pad 与步进都取 GAP 的整数倍，扫出来的坐标才能和已有卡片的边缘对齐，
+  // 缝隙才会是 GAP 而不是 4px、12px 这种歪数。
+  const pad = 4 * GRID;
   const limitX = Math.max(pad + w, (S.cfg.organizer?.x ?? S.design.w) - 20);
   const boxes = S.cfg.widgets.map((o) => ({ x: o.x, y: o.y, w: o.w, h: o.h }));
   const clash = (a) =>
-    boxes.some((b) => a.x < b.x + b.w + 8 && a.x + a.w + 8 > b.x && a.y < b.y + b.h + 8 && a.y + a.h + 8 > b.y);
+    boxes.some((b) => a.x < b.x + b.w + GAP && a.x + a.w + GAP > b.x && a.y < b.y + b.h + GAP && a.y + a.h + GAP > b.y);
 
-  for (let y = pad; y + h <= S.design.h - pad; y += 20) {
-    for (let x = pad; x + w <= limitX; x += 20) {
+  for (let y = pad; y + h <= S.design.h - pad; y += GAP) {
+    for (let x = pad; x + w <= limitX; x += GAP) {
       const box = { x, y, w, h };
       if (!clash(box)) return box;
     }

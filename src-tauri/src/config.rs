@@ -9,27 +9,30 @@ use std::path::PathBuf;
 
 pub const CONFIG_VERSION: u32 = 3;
 
-/// 预设尺寸的基准边长 a（设计像素）。
-///
-/// 三档尺寸全部从它推出来，所以组件之间天然能对齐：
-/// 小 a×a、中 2a×a、大 2a×1.5a。取 120 是因为 2a=240 刚好和「逐时 6 列 +
-/// 高低温」挤得下的最小宽度差不多，再大就回到「桌面被卡片占满」的老问题。
-pub const A: f64 = 120.0;
+/// 最小吸附网格 / 最小缝隙（设计像素）。和前端 main.js 的 GRID / GAP 是同一套数。
+pub const GRID: f64 = 6.0;
+
+/// 小号边长（设计像素）。102 是 6 的整数倍，两张小卡并排的宽度才有意义。
+pub const S: f64 = 102.0;
+
+/// 中号 / 大号的宽度（设计像素）= 两个小号 + 一条最小缝隙，2 × 102 + 6 = 210。
+/// 这样「两张小卡并排」与「一张中卡」占同样的宽度、留同样的缝。
+pub const MW: f64 = 2.0 * S + GRID;
 
 /// 尺寸档位 → 宽高（设计像素）
 pub fn dims(size: &str) -> (f64, f64) {
     match size {
-        "s" => (A, A),
-        "l" => (A * 2.0, A * 1.5),
-        _ => (A * 2.0, A),
+        "s" => (S, S),
+        "l" => (MW, S + 24.0),
+        _ => (MW, S),
     }
 }
 
 /// 某个组件允许的尺寸档位。
 ///
-/// v0.7 起除备忘录外一律取消「大」：240×180 在桌面上太占地方，而多出来的
-/// 60px 高度只够把同样的内容排松一点，读者并不会因此多看到信息。
-/// 日历和备忘录塞不下 a×a，本来就没有「小」，所以日历只剩「中」一档。
+/// v0.7 起除备忘录外一律取消「大」：210×126 在桌面上太占地方，而多出来的
+/// 24px 高度只够把同样的内容排松一点，读者并不会因此多看到信息。
+/// 日历和备忘录塞不下 102×102，本来就没有「小」，所以日历只剩「中」一档。
 pub fn sizes_for(kind: &str) -> &'static [&'static str] {
     match kind {
         "notes" => &["m", "l"],
@@ -156,18 +159,19 @@ impl Config {
 
         // 左列让开桌面图标的第一列（图标列含文字标签约 130 设计像素宽）。
         // 窗口在桌面层之下，图标永远画在卡片上面；默认位置贴边就等于让图标压住整列卡片。
-        let col_x = 180.0;
+        // 起点与间距都取吸附网格（6）的整数倍：竖排每张卡之间正好留出 6 的缝。
+        let col_x = 186.0;
 
         Self {
             version: CONFIG_VERSION,
             scale: 0.0,
             material: d_material(),
             widgets: vec![
-                widget("weather", col_x, 36.0),
-                widget("clock", col_x, 176.0),
-                widget("calendar", col_x, 316.0),
-                widget("system", col_x, 456.0),
-                widget("network", col_x, 596.0),
+                widget("weather", col_x, 42.0),
+                widget("clock", col_x, 150.0),
+                widget("calendar", col_x, 258.0),
+                widget("system", col_x, 366.0),
+                widget("network", col_x, 474.0),
             ],
             organizer: OrganizerCfg {
                 x: org_x,

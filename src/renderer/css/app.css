@@ -720,8 +720,10 @@ body[data-glass="1"] .surface::before {
 
 /* ==========================================================================
    尺寸档位
-   只有三档：小 a×a、中 2a×a、大 2a×1.5a（a = 120 设计像素）。
-   同一档在所有组件上宽高完全一致，横着竖着都能对齐。
+   只有三档：小 102×102、中 210×102、大 210×126（设计像素）。
+   宽高都是吸附网格（main.js 的 GRID = GAP = 6）的整数倍，卡片之间才留得出统一的 6px 缝；
+   中/大宽度 = 两个小 + 一条缝（2×102+6=210），两张小卡并排正好顶一张中卡。
+   同一档在所有组件上宽高完全一致，横着竖着都能对齐；中/大同宽，叠起来严丝合缝。
    小号不是把内容整体缩小，而是「只留最要紧的」——字挤在一起比裁掉更难看。
    ========================================================================== */
 
@@ -745,6 +747,56 @@ body[data-glass="1"] .surface::before {
 .card[data-kind="weather"][data-size="s"] .wx-meta {
   padding-top: 0;
   gap: 1px;
+}
+
+/* 中：高度从 120 收到 100，逐时行与气温都得压薄一档才塞得进 76 的内容高 */
+.card[data-kind="weather"][data-size="m"] .wx-head {
+  font-size: 10px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-mid {
+  margin-top: 3px;
+  gap: 6px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-temp {
+  font-size: 28px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-meta {
+  gap: 2px;
+  padding-top: 2px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-cond {
+  font-size: 10px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-cond svg {
+  width: 12px;
+  height: 12px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-hilo {
+  font-size: 9px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-hours {
+  padding-top: 3px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-hours .h {
+  gap: 0;
+  font-size: 8px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-hours .h svg {
+  width: 10px;
+  height: 10px;
+}
+
+.card[data-kind="weather"][data-size="m"] .wx-hours .h b {
+  font-size: 9px;
 }
 
 /* 大：气温块在剩余空间里居中，逐时行贴底。
@@ -781,12 +833,12 @@ body[data-glass="1"] .surface::before {
 }
 
 .card[data-kind="clock"][data-size="s"] .ck-time {
-  /* 120 宽扣掉内边距只剩 94：34px 的「23:29」再加秒就顶出去了 */
-  font-size: 26px;
+  /* 102 宽扣掉内边距只剩 76：「23:29」再加秒必须缩到这个字号才不顶出去 */
+  font-size: 22px;
 }
 
 .card[data-kind="clock"][data-size="s"] .ck-time small {
-  font-size: 11px;
+  font-size: 9px;
 }
 
 .card[data-kind="clock"][data-size="s"] .ck-zone {
@@ -803,11 +855,11 @@ body[data-glass="1"] .surface::before {
 
 /* ---- 数字时钟 ---- */
 .card[data-kind="digital"][data-size="s"] .dg-time {
-  font-size: 28px;
+  font-size: 24px;
 }
 
 .card[data-kind="digital"][data-size="s"] .dg-time small {
-  font-size: 11px;
+  font-size: 9px;
 }
 
 .card[data-kind="digital"][data-size="l"] .dg-time {
@@ -815,9 +867,9 @@ body[data-glass="1"] .surface::before {
 }
 
 /* ---- 日历 ---- */
-/* 中号只有 120 高，网格得压薄一点才放得下 6 行 */
+/* 中号只有 102 高，网格得压薄一点才放得下 6 行 */
 .card[data-kind="calendar"][data-size="m"] .cd {
-  gap: 9px;
+  gap: 4px;
 }
 
 .card[data-kind="calendar"][data-size="m"] .cd-today {
@@ -833,12 +885,16 @@ body[data-glass="1"] .surface::before {
   font-size: 8.5px;
 }
 
+.card[data-kind="calendar"][data-size="m"] .cd-month {
+  gap: 2px;
+}
+
 .card[data-kind="calendar"][data-size="m"] .cd-grid {
   gap: 0;
 }
 
 .card[data-kind="calendar"][data-size="m"] .cd-grid span {
-  height: 12px;
+  height: 10px;
 }
 
 .card[data-kind="calendar"][data-size="l"] .cd-day {
@@ -877,6 +933,20 @@ body[data-glass="1"] .surface::before {
   font-weight: 300;
 }
 
+/* 中：三行指标 + 走势 + 脚注要塞进 102 高，间距收紧、走势压到 20 */
+.card[data-kind="system"][data-size="m"] .sys-rows {
+  margin-top: 3px;
+  gap: 3px;
+}
+
+.card[data-kind="system"][data-size="m"] .sys-spark {
+  height: 20px;
+}
+
+.card[data-kind="system"][data-size="m"] .sys-foot {
+  margin-top: 2px;
+}
+
 .card[data-kind="system"][data-size="l"] .sys-spark {
   height: 54px;
 }
@@ -895,11 +965,11 @@ body[data-glass="1"] .surface::before {
 }
 
 .card[data-kind="network"][data-size="s"] .net-num b {
-  font-size: 30px;
+  font-size: 24px;
 }
 
 .card[data-kind="network"][data-size="s"] .net-link {
-  max-width: 62px;
+  max-width: 42px;
 }
 
 .card[data-kind="network"][data-size="l"] .net-mid {
@@ -1627,20 +1697,20 @@ body[data-edit="1"] .grip {
   text-overflow: ellipsis;
 }
 
-/* 迷你卡片按档位的真实比例：a×a / 2a×a / 2a×1.5a */
+/* 迷你卡片按档位的真实比例：102×102 / 210×102 / 210×126，统一缩到 37.5% */
 .gsec[data-size="s"] .sk {
-  width: 46px;
-  height: 46px;
+  width: 38px;
+  height: 38px;
 }
 
 .gsec[data-size="m"] .sk {
-  width: 76px;
+  width: 79px;
   height: 38px;
 }
 
 .gsec[data-size="l"] .sk {
-  width: 78px;
-  height: 58px;
+  width: 79px;
+  height: 47px;
 }
 
 .gsec[data-size="s"] .sk b {
