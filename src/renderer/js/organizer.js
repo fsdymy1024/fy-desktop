@@ -69,14 +69,26 @@ function shelfHtml(group, folded, isLoose, palette) {
     ? `<div class="shelf-hint">${isLoose ? '桌面已经很干净' : '空 · 把快捷方式拖进来'}</div>`
     : `<div class="cells" style="--cols:${COLS}">${cells}</div>`;
 
+  // 折叠只对真实分组有意义：「待整理」是虚拟分组，收起它没有可隐藏的内容，
+  // 所以整行不给点击语义，那个小三角也不渲染（以前点了没反应，像坏了）。
+  const headAttrs = isLoose
+    ? ''
+    : ` role="button" tabindex="0" aria-expanded="${folded ? 'false' : 'true'}"`;
+  // 小三角是纯视觉提示：整行已经是 button（带 aria-expanded），
+  // 再让读屏单独播报一次按钮就成了两个控件干一件事
+  const foldBtn = isLoose
+    ? ''
+    : `<button class="fold" data-fold="${esc(group.id)}" tabindex="-1" aria-hidden="true"
+         title="${folded ? '展开' : '折叠'}">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg>
+        </button>`;
+
   return `<div class="shelf ${folded ? 'folded' : ''}" data-g="${esc(group.id)}">
-      <div class="shelf-head" data-g="${esc(group.id)}">
+      <div class="shelf-head" data-g="${esc(group.id)}"${headAttrs}>
         <span class="swatch" style="background:${esc(group.color || '#8d9aa6')}"></span>
         <h3>${esc(group.name)}</h3>
         <span class="count">${items.length}</span>
-        <button class="fold" data-fold="${esc(group.id)}" title="${folded ? '展开' : '折叠'}">
-          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg>
-        </button>
+        ${foldBtn}
       </div>
       ${folded ? '' : empty}
     </div>`;
@@ -185,6 +197,13 @@ export function renderOrganizer(el, cfg, view, handlers) {
       handlers.fold(foldBtn.dataset.fold);
       return;
     }
+    // 整行都能点：不用瞄准右边那个 16px 的小三角。按钮先匹配并 return，
+    // 所以点按钮不会因为冒泡到这里再折一次。
+    const head = e.target.closest('.shelf-head[data-g]');
+    if (head && head.dataset.g !== '__loose') {
+      handlers.fold(head.dataset.g);
+      return;
+    }
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'fold-all') return handlers.foldAll();
     if (act === 'add-group') return handlers.addGroup();
@@ -203,9 +222,22 @@ export function renderOrganizer(el, cfg, view, handlers) {
     if (cell) handlers.open(cell.dataset.path);
   };
 
-  // 键盘：格子可 Tab 聚焦，Enter / 空格等于单击打开
+  // 键盘：分组标题可 Tab 聚焦 → Enter / 空格折叠；格子可 Tab 聚焦 → Enter 打开
   el.onkeydown = (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    // 焦点在折叠按钮上时交给原生 click，不然同一次按键会折两下
+    if (e.target.closest('.fold')) return;
+    const head = e.target.closest('.shelf-head[data-g]');
+    if (head && head.dataset.g !== '__loose') {
+      e.preventDefault();
+      const gid = head.dataset.g;
+      handlers.fold(gid);
+      // 折叠后整块面板会重建，焦点会掉回 body；键盘用户要能接着切下一个分组
+      requestAnimationFrame(() => {
+        el.querySelector(`.shelf-head[data-g="${gid}"]`)?.focus();
+      });
+      return;
+    }
     const cell = e.target.closest('.cell[data-path]');
     if (!cell) return;
     e.preventDefault();

@@ -1074,11 +1074,19 @@ body[data-edit="1"] .org-tools,
   border-radius: 3px;
 }
 
+/* 标题行按「文字高度 + 四周 2px」围一圈：悬停底色只罩住这一圈 */
 .shelf-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 2px 5px;
+  padding: 2px;
+}
+
+/* 标题行下沿与格子之间留一道缝。以前下边距只有 5px，图标的上边框几乎
+   顶到文字；7px + 2px padding 与分组之间的 9px 间距对齐，节奏一致。
+   折叠后下面没有内容，不需要这道缝。 */
+.shelf:not(.folded) .shelf-head {
+  margin-bottom: 7px;
 }
 
 .shelf-head .swatch {
@@ -1112,14 +1120,34 @@ body[data-edit="1"] .org-tools,
   transition: transform 0.2s, background 0.16s;
 }
 
+/* 小三角现在是纯装饰（整行都能点），hover 只给一点点反馈就够 */
 .shelf-head .fold:hover {
-  background: rgba(255, 255, 255, 0.5);
-  color: var(--ink);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink2);
 }
 
 .shelf-head .fold svg {
   width: 9px;
   height: 9px;
+}
+
+/* 整行可点：点标题行任意位置都能折叠/展开，不用瞄准右边那个小三角。
+   提示只做到「刚好看得出来」——光标变手型 + 一层几乎察觉不到的高亮，
+   整行大面积反白会抢掉内容本身的注意力。
+   「待整理」是虚拟分组，没有 role，不会有手型与高亮。 */
+.shelf-head[role='button'] {
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background 0.16s;
+}
+
+.shelf-head[role='button']:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.shelf-head[role='button']:focus-visible {
+  outline: 1.5px solid rgba(61, 139, 240, 0.9);
+  outline-offset: 1px;
 }
 
 .shelf.folded .fold {
@@ -2159,6 +2187,14 @@ body[data-material="solid"] .cell.empty .ic {
 .surface.on-dark .cell:hover {
   background: rgba(255, 255, 255, 0.14);
   border-color: rgba(255, 255, 255, 0.22);
+}
+
+.surface.on-dark .shelf-head[role='button']:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.surface.on-dark .shelf-head .fold:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .surface.on-dark .shelf-hint {
