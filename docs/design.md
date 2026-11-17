@@ -219,7 +219,7 @@ exe 换了图标但路径没变，缓存命中旧图，桌面快捷方式会一�
 
 ### 4.3.3 关于页、更新与签名
 
-托盘 →「关于 fy-desktop…」打开关于面板（浮层配色走 `--pop-*`，跟材质走）：
+托盘 →「关于 fy-desktop…」打开控制中心的「关于」页（v1.1 起；此前是桌面层的一块浮层）：
 版本号、更新源链接、检查更新按钮、自动更新开关（存进配置 `auto_update`）。
 
 更新链路刻意做得比 `tauri-plugin-updater` 轻：发布流程就是「打完包把
@@ -298,7 +298,7 @@ CSS 的关键改动是把材质变量**下沉**：`--ink/--fill/--veil/--stroke`
 组件库之所以要单独同步，是因为它自有一套 `--gal-*` 变量、按 `.gal[data-mat]`
 取值，不吃 body 的 `--pop-*`。两个变量组各管一摊，改材质时都得照顾到。
 
-### 4.3.5 浮层窗口：可拖动 / 点遮罩关闭（v0.9.1，v0.9.8 调整）
+### 4.3.5 浮层窗口：可拖动 / 点遮罩关闭（v0.9.1，v0.9.8 调整；v1.1 起被 4.3.6 替代）
 
 三个浮层（组件库 `#gallery`、关于 `#about`、弹窗 `.modal`）此前都是
 `position:fixed; inset:0; place-items:center` 的遮罩，窗口固定居中，
@@ -322,6 +322,65 @@ v0.9.1 先把「点遮罩关闭」整个删掉，只留 `x` / Esc。但这又走
 
 拖动期间 `document.body.style.userSelect = 'none'`，结束恢复，免得标题文字
 被选中成一片蓝。天气地区弹窗补了 `.modal-x`，与另外两个窗口一致。
+
+### 4.3.6 控制中心：改成独立窗口（v1.1）
+
+v1.1 把 4.3.5 那三个浮层整体搬进独立的 `hub` 窗口。动机不是好看，是浮层方案本身
+有结构性问题：
+
+- 浮层叠在桌面层之上，打开时必须整窗接管鼠标（否则点不到浮层后面那块遮罩），
+  关掉又要赶紧把鼠标还给桌面；`set_hit_regions(force)` 一开一关，中间任何一次判定
+  失误都表现为「桌面被一块透明板锁死」或「点一下就没了」——v0.9.8 那轮反复修的正是这个。
+- 浮层没有自己的窗口，就没有任务栏按钮、不能 Alt+Tab、不能最小化，位置也只能靠
+  `transform` 偏移凑。
+- 组件库 / 关于 / 天气地区各写一套拖动与关闭逻辑，三份代码互相漂移。
+
+窗口化之后：
+
+| 项 | 值 | 原因 |
+| --- | --- | --- |
+| `label` | `hub` | 在 `tauri.conf.json` 里静态声明 |
+| `visible` | false | 启动即以隐藏状态建好，运行时只 `show` / `hide` |
+| `decorations` / `transparent` | false / true | 自绘标题栏与圆角，露出桌面 |
+| `alwaysOnBottom` | false | 普通窗口，该在前台就在前台 |
+| `skipTaskbar` | false | 控制中心要有任务栏按钮 |
+
+**不在运行时 `new WebviewWindow`**：同机实测第二套 WebView2 会拿到一个不绘制内容的
+空白窗口，两套窗口的 `additionalBrowserArgs` 不一致时还会直接创建失败。所以窗口在
+配置里声明好，只做 `show` / `hide`。
+
+**尺寸与缩放**：设计稿固定 960×660，`ui = clamp(屏宽 / 2880, 1, 1.5)`，窗口逻辑尺寸
+= 960×660 × ui，内容用 `transform: scale(var(--ui))` 同步放大。按 2880 起算而不是
+1920：按 1920 算时 4K 屏会落进 2 倍档，窗口 1920×1320 直接吃掉半屏；现在 4K 上是
+1280×880，1080p 上就是 1:1。位置存 `fy.hub.pos`（localStorage），`onMoved` 只挂
+一次，紧凑弹窗期间的移动不写入，避免覆盖用户拖好的主窗口位置。
+
+**布局算法仍然只有一份**：控制中心不自己算空位。点「添加组件 / 换尺寸 / 换材质 /
+换缩放」时发 `invoke('hub_action', { action })`，后端 `emit("hub:action")` 给 `main`
+窗口，由 `main.js` 的 `handleHubAction` 用桌面那套 `freeSpot` / `setCardSize` 执行并
+落盘。反过来，后端改配置会广播 `config:changed`，控制中心据此重渲染——所以它开着时，
+桌面上的右键操作会实时反映到列表。
+
+**紧凑弹窗（只显示弹窗）**：从桌面双击天气卡、或在收纳面板新建 / 重命名分组时，
+用户要的只是那个小输入框。桌面侧发出的意图带 `compact: true`，控制中心收到后：
+
+- `body[data-compact]` 生效：`.tb`（标题栏）与 `.body`（侧栏 + 页面）`display: none`，
+  `.app` 背景透明、边框与内阴影去掉，`.layer` 遮罩也透明——屏幕上只剩弹窗本体；
+- **窗口尺寸与位置完全不动**。曾经实现成「缩到弹窗大小（466×213）并居中」，视觉上更
+  像原生弹窗，但会带出一阵跳变，弹窗自身也跟着变尺寸，所以改回「尺寸不动、只隐藏主界面」；
+- 关掉弹窗（`x` / Esc / 点空白 / 提交成功）→ `hide_hub`，窗口一起收起；下次从托盘
+  打开仍是完整主界面（`data-compact` 已清）。
+
+**冷启动竞态**：窗口隐藏期间 WebView2 会把页面挂起，`hub_boot` 往往比托盘 / 桌面
+发来的意图晚很多。迟到的意图只留在后端的 `HubPending` 里，而 `hub:intent` 事件早
+就发过了（那时监听还没注册）。所以监听装好后要再补取一次 `hub_boot`，把 `pending`
+取出来处理——否则「冷启动时点桌面上的天气地区」一点反应都没有。
+
+**桌面层的启动竞态**：`AppState` 是在 `setup()` 里 `app.manage()` 的，而 WebView2
+可能已经把 `index.html` 加载完并发出 `boot`。这一次调用会以 `state not managed` 失败，
+`main.js` 的 `boot().catch` 直接把整层换成错误屏，而且不会自愈——用户看到的是
+「桌面上什么都没有」。修法在 `bridge.js` 的 `invokeRetry`：只对 `not managed` 这类
+错误重试，其它错误照常抛出，不把真错误藏起来。
 
 ### 4.4 分组的格子系统
 
@@ -364,6 +423,8 @@ v0.9.1 先把「点遮罩关闭」整个删掉，只留 `x` / Esc。但这又走
 
 ### 5.1 窗口属性
 
+桌面层（`main`，铺满主屏）：
+
 | 属性 | 值 | 原因 |
 | --- | --- | --- |
 | `transparent` | true | 要露出壁纸 |
@@ -372,6 +433,10 @@ v0.9.1 先把「点遮罩关闭」整个删掉，只留 `x` / Esc。但这又走
 | `alwaysOnBottom` | true | 在桌面层之下，不挡图标与右键菜单 |
 | `visible` | false | 等前端 `ui_ready` 再显示，避免白闪 |
 | `shadow` | false | 全屏窗口加阴影会拖慢合成 |
+
+控制中心（`hub`，普通窗口）：`decorations: false`、`transparent: true`、`visible: false`、
+`alwaysOnBottom: false`、`skipTaskbar: false`。尺寸与位置由前端按屏宽算（见 4.3.6），
+窗口本身只负责 `show` / `hide`。
 
 启动链路：`setup` → 铺满主屏 → `exclude_from_capture` → 建托盘 → 起采样 → 保持隐藏；
 前端 `boot()` 拿配置/布局/玻璃 → 渲染 → `ui_ready` → 后端 `show()` + `SW_SHOWNOACTIVATE`。
@@ -407,11 +472,11 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
 
 ```
 ┌──────────────────── 前端（WebView2，无框架 ESM） ────────────────────┐
-│ main.js      启动编排、坐标变换、拖动/缩放、编辑态、提示             │
+│ main.js      桌面层：启动编排、坐标变换、拖动/缩放、编辑态、提示     │
+│ hub.js       控制中心：五页渲染、弹层、窗口尺寸与紧凑弹窗            │
 │ widgets.js   七个组件的 DOM 模板与数据绑定（mount 返回更新器）       │
 │ organizer.js 收纳面板渲染、网格拖拽、右键菜单                        │
-│ gallery.js   组件库面板                                              │
-│ bridge.js    invoke / listen 薄封装 + 失败诊断                       │
+│ bridge.js    invoke / listen 薄封装 + 启动重试 + 失败诊断            │
 └──────────────────────────────┬───────────────────────────────────────┘
                     invoke / emit（见 6.1）
 ┌──────────────────────────────┴───────────────────────────────────────┐
@@ -431,6 +496,10 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
 | 命令 | 方向 | 说明 |
 | --- | --- | --- |
 | `boot` | → | 一次性返回配置、设计尺寸、缩放、版本、收纳根、自启状态 |
+| `hub_boot` | → | 控制中心启动：配置、版本、收纳根、自启、色板、待处理的意图（`pending`） |
+| `open_hub` / `hide_hub` | → | 打开 / 隐藏控制中心，可带「打开哪一页、弹哪个框」的意图 |
+| `hub_action` | → | 控制中心 → 桌面窗口的意图转发（加组件 / 换尺寸 / 换材质 / 换缩放 / 调整布局） |
+| `hub_log` | → | 控制中心的日志出口（WebView2 的 console 不进终端） |
 | `ui_ready` | → | 前端渲染完成，后端显示窗口 |
 | `save_config` | → | 整份配置落盘（前端 320ms 防抖） |
 | `desktop_view` | → | 扫描桌面，返回分组与未收纳条目 |
@@ -445,6 +514,7 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
 | `weather_now` / `weather_refresh` | → | 取缓存 / 主动刷新 |
 | `set_material` / `quit_app` / `dev_dump` | → | 材质、退出、诊断 |
 | `metrics` / `weather` / `tray:action` / `autostart:changed` / `tauri://drag-drop` | ← | 后端推送 |
+| `hub:intent` / `hub:action` / `config:changed` / `desktop:changed` / `glass:update` | ← | 后端推送（窗口之间转发，见 4.3.6） |
 
 ### 6.2 配置
 

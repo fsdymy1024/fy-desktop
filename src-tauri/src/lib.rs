@@ -59,11 +59,16 @@ pub fn run() {
         return;
     }
 
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().manage(state::HubPending::default());
 
     builder
         .invoke_handler(tauri::generate_handler![
             commands::boot,
+            commands::hub_boot,
+            commands::open_hub,
+            commands::hide_hub,
+            commands::hub_log,
+            commands::hub_action,
             commands::ui_ready,
             commands::save_config,
             commands::get_config,
@@ -137,14 +142,27 @@ pub fn run() {
 
             // 设计坐标系 = 窗口 CSS 尺寸 / 缩放。
             // 4K 屏上按 1920 设计稿直接画，字会小得像贴纸，所以先放大一档。
+            // cfg.scale > 0 表示用户在控制中心里手动固定了缩放，优先级高于自动值。
             let scale_factor = win.scale_factor().unwrap_or(1.0);
             let phys = win.inner_size()?;
             let css_w = phys.width as f64 / scale_factor;
             let css_h = phys.height as f64 / scale_factor;
-            let ui = (css_w / 1920.0).clamp(1.0, 2.0);
-            let design = (css_w / ui, css_h / ui);
+            let auto_ui = (css_w / 1920.0).clamp(1.0, 2.0);
+            let auto_design = (css_w / auto_ui, css_h / auto_ui);
 
-            let cfg = config::load_or_default(design.0, design.1);
+            let mut cfg = config::load_or_default(auto_design.0, auto_design.1);
+            let ui = if cfg.scale > 0.0 {
+                cfg.scale.clamp(1.0, 2.0)
+            } else {
+                auto_ui
+            };
+            let design = (css_w / ui, css_h / ui);
+            if (ui - auto_ui).abs() > 0.001 {
+                // 手动缩放会改变设计坐标系，坐标必须按新画布重新夹一遍，
+                // 否则收纳面板会停在屏幕外。
+                config::normalize(&mut cfg, design.0, design.1);
+                config::save(&cfg);
+            }
             let state = AppState::new(cfg.clone());
             if let Ok(mut d) = state.design.lock() {
                 *d = design;
@@ -217,6 +235,29 @@ pub fn run() {
 
             if std::env::var("FY_SELFTEST").is_ok() {
                 spawn_selftest(app.handle().clone());
+            }
+
+            // FY_HUB=<view|weather|group>：调试/截图时自动呼出控制中心指定页面或弹层
+            // （和 FY_SHOT、FY_UI 一样只用于自检）
+            if let Ok(v) = std::env::var("FY_HUB") {
+                if !v.is_empty() {
+                    let intent = match v.as_str() {
+                        "weather" => serde_json::json!({
+                            "view": "settings",
+                            "dialog": { "type": "weather" }
+                        }),
+                        "group" => serde_json::json!({
+                            "view": "groups",
+                            "dialog": { "type": "groupCreate" }
+                        }),
+                        other => serde_json::json!({ "view": other }),
+                    };
+                    let h = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(1500));
+                        commands::open_hub_intent(&h, intent);
+                    });
+                }
             }
 
             if let Ok(path) = std::env::var("FY_SHOT") {

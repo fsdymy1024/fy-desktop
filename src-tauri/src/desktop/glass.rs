@@ -46,6 +46,26 @@ fn exclude_for_grab(_hwnd: isize) {}
 #[cfg(not(windows))]
 fn include_back(_hwnd: isize) {}
 
+/// 抓底图期间把另一个窗口（控制中心）也排除掉。
+///
+/// 主窗口是 `WDA_EXCLUDEFROMCAPTURE` 的常客，控制中心却是普通顶层窗口：
+/// 不处理的话，开着控制中心刷新底图，玻璃卡下面会糊出一块窗口影子。
+#[cfg(windows)]
+pub fn exclude_hwnd(hwnd: isize) {
+    exclude_for_grab(hwnd);
+}
+
+#[cfg(windows)]
+pub fn include_hwnd(hwnd: isize) {
+    include_back(hwnd);
+}
+
+#[cfg(not(windows))]
+pub fn exclude_hwnd(_hwnd: isize) {}
+
+#[cfg(not(windows))]
+pub fn include_hwnd(_hwnd: isize) {}
+
 #[cfg(windows)]
 fn grab_screen(scale_down: u32, sigma: f32, raw: bool) -> Result<Vec<u8>, String> {
     use windows::Win32::Graphics::Gdi::{

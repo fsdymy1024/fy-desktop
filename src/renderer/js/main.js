@@ -5,12 +5,9 @@
  * 所以后端报上来的热区要乘 devicePixelRatio，拖拽位移要除以 scale。
  */
 
-import { invoke, listen, unlistenAll } from './bridge.js';
+import { invoke, invokeRetry, listen, unlistenAll } from './bridge.js';
 import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf, GAP } from './widgets.js';
 import { renderOrganizer, groupAtPoint, resetLoose, clearIconCache } from './organizer.js';
-import { openGallery } from './gallery.js';
-import { openAbout, updateHint } from './about.js';
-import { makeDraggable, closeOnBackdrop } from './floatwin.js';
 import { clamp } from './util.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -24,8 +21,6 @@ const S = {
   edit: false,
   force: false,
   mounted: new Map(),
-  gallery: null,
-  about: null,
   version: '',
   shotMode: false,
   /// 分组配色由后端下发（boot.palette），前端不再自己写一份
@@ -49,7 +44,8 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 async function boot() {
-  const b = await invoke('boot');
+  // 页面可能比后端 setup() 里的 manage() 先到，这类失败重试即可（见 bridge.js）
+  const b = await invokeRetry('boot');
   S.uitest = b.uitest || '';
   S.cfg = b.config;
   S.design = { w: b.design[0], h: b.design[1] };
@@ -149,7 +145,6 @@ function setGlobalMaterial(mat) {
   for (const w of S.cfg.widgets || []) w.material = '';
   applyMaterial();
   syncCardMaterials();
-  S.gallery?.setMaterial?.(mat);
   save();
   loadGlass();
 }
@@ -325,11 +320,10 @@ function bindCard(el, w) {
     openCardMenu(el, w, e.clientX, e.clientY);
   });
 
-  // 双击天气卡直接改地区：这是最常用的设置，不该藏进托盘
+  // 双击天气卡直接改地区：这是最常用的设置，不该藏进托盘。
+  // v1.1 起弹层统一由控制中心承载，和「设置 → 天气地区」是同一套 UI 与逻辑。
   if (w.kind === 'weather') {
-    el.addEventListener('dblclick', (e) => {
-      pickPlace();
-    });
+    el.addEventListener('dblclick', () => openHub('settings', { type: 'weather', compact: true }));
   }
 }
 
@@ -680,17 +674,9 @@ const handlers = {
 
     showMenu({ x: e.clientX, y: e.clientY }, items);
   },
-  addGroup: async () => {
-    const name = await promptInput('新建分组', '例如：设计素材');
-    if (!name) return;
-    try {
-      await invoke('create_group', { name });
-    } catch (e) {
-      return toast(`新建分组失败：${e?.message || e}`);
-    }
-    // 分组是后端加的，本地副本得跟上，否则下一次 save() 会把它抹掉
-    await syncConfig();
-    await refreshDesktop();
+  addGroup: () => {
+    // 命名弹层搬进了控制中心：和天气地区同一套输入框，不再需要整窗接管鼠标
+    openHub('groups', { type: 'groupCreate', compact: true });
   },
   /** 分组自身的右键菜单：改名、调顺序、打开目录、删除 */
   groupMenu: (e, gid) => {
@@ -703,18 +689,7 @@ const handlers = {
       { label: g.name, head: true },
       {
         label: '重命名…',
-        act: async () => {
-          const name = await promptInput('重命名分组', '新的分组名', g.name);
-          if (!name || name === g.name) return;
-          try {
-            await invoke('rename_group', { id: gid, name });
-            await syncConfig();
-            await refreshDesktop();
-            toast(`已改名为「${name}」`);
-          } catch (err) {
-            toast(`重命名失败：${err?.message || err}`);
-          }
-        }
+        act: () => openHub('groups', { type: 'groupRename', id: gid, name: g.name, compact: true })
       },
       { label: '上移', disabled: i === 0, act: () => moveGroup(i, -1) },
       { label: '下移', disabled: i >= groups.length - 1, act: () => moveGroup(i, 1) },
@@ -1007,7 +982,7 @@ function updateHit() {
   const trayMenu = $('#traymenu');
   if (trayMenu && !trayMenu.hidden) push(trayMenu.firstElementChild || trayMenu);
 
-  const force = S.edit || S.force || !!S.gallery || !!S.about || S.trayMenu || (menu && !menu.hidden);
+  const force = S.edit || S.force || S.trayMenu || (menu && !menu.hidden);
   invoke('set_hit_regions', { rects, force: !!force }).catch(() => {});
 }
 
@@ -1047,38 +1022,133 @@ function setEdit(on) {
   updateHit();
 }
 
-function openGal() {
-  if (S.gallery) return;
-  S.gallery = openGallery($('#gallery'), {
-    cfg: S.cfg,
-    onAdd: (kind, size, material) => addWidget(kind, size, material),
-    onClose: () => {
-      S.gallery = null;
-      updateHit();
-    },
-    onChange: (patch) => setGlobalMaterial(patch.material),
-  });
-  updateHit();
+/* ---- 控制中心 → 桌面窗口 ---- */
+
+/**
+ * 控制中心发来的修改。这里执行而不是让 hub 直接改配置：
+ * 找空位、吸网格、热区、防抖落盘都只有这一份实现，两边不会漂移。
+ */
+function handleHubAction(a) {
+  if (!a || typeof a.type !== 'string') return;
+  switch (a.type) {
+    case 'add-widget':
+      addWidget(a.kind, a.size || 'm', a.material || '');
+      break;
+    case 'remove-widget':
+      if (S.cfg.widgets.length > 1) removeWidget(a.id);
+      break;
+    case 'set-size': {
+      const w = S.cfg.widgets.find((x) => x.id === a.id);
+      const m = S.mounted.get(a.id);
+      if (w && m && sizesOf(w.kind).includes(a.size) && w.size !== a.size) {
+        setCardSize(m.el, w, a.size);
+      }
+      break;
+    }
+    case 'set-material':
+      setGlobalMaterial(a.material);
+      break;
+    case 'set-scale':
+      applyScale(a.scale);
+      break;
+    case 'set-labels':
+      S.cfg.show_labels = !!a.on;
+      applyMaterial();
+      save();
+      break;
+    case 'set-seconds':
+      S.cfg.show_seconds = !!a.on;
+      setShowSeconds(!!a.on);
+      save();
+      break;
+    case 'refresh-glass':
+      loadGlass();
+      break;
+    case 'edit-layout':
+      startLayout();
+      break;
+    default:
+      console.warn('[fy] 未知的控制中心操作', a);
+  }
 }
 
-/* ---- 关于 ---- */
-function openAboutPanel() {
-  if (S.about) return;
-  S.about = openAbout($('#about'), {
-    version: S.version,
-    cfg: S.cfg,
-    onClose: () => {
-      S.about = null;
-      updateHit();
-    },
-    onAutoUpdate: (on) => {
-      S.cfg.auto_update = on;
-      // set_auto_update 已经在后端改过并落盘，这里同步 rev 即可
-      syncConfig();
-      toast(on ? '已开启自动更新检查' : '已关闭自动更新检查');
-    }
-  });
+/**
+ * 后端配置变了：同步「不属于布局」的字段。
+ * 自己的 save() 也会回到这里，所以只在真的变了的时候碰 DOM。
+ */
+function onConfigChanged(cfg) {
+  if (!cfg || typeof cfg !== 'object') return;
+  const prev = S.cfg;
+  const labelsChanged = (prev.show_labels !== false) !== (cfg.show_labels !== false);
+  const secChanged = (prev.show_seconds !== false) !== (cfg.show_seconds !== false);
+
+  adoptConfig(cfg);
+  S.cfg.autostart = !!cfg.autostart;
+  S.cfg.auto_update = cfg.auto_update !== false;
+  S.cfg.show_labels = cfg.show_labels !== false;
+  S.cfg.show_seconds = cfg.show_seconds !== false;
+  S.cfg.scale = Number(cfg.scale) || 0;
+  S.cfg.material = cfg.material || 'glass';
+
+  if (labelsChanged) applyMaterial();
+  if (secChanged) setShowSeconds(S.cfg.show_seconds);
+}
+
+/**
+ * 手动缩放：重算设计坐标系，把卡片和收纳面板夹回画布内。
+ * 和启动时 lib.rs 的做法保持同一套规则（自动 = 屏宽/1920）。
+ */
+function applyScale(scale) {
+  const v = Number(scale) || 0;
+  const auto = clamp(window.innerWidth / 1920, 1, 2);
+  const ui = v > 0 ? clamp(v, 1, 2) : auto;
+
+  S.cfg.scale = v;
+  S.scale = ui;
+  S.design = { w: window.innerWidth / ui, h: window.innerHeight / ui };
+
+  const o = S.cfg.organizer;
+  if (o) {
+    o.x = Math.round(clamp(o.x, 0, Math.max(0, S.design.w - o.w)));
+    o.y = Math.round(clamp(o.y, 0, Math.max(0, S.design.h - o.h)));
+  }
+
+  layoutStage();
+  normalizeSizes();
+  renderWidgets();
+  renderPanel();
   updateHit();
+  toast(v > 0 ? `界面缩放固定为 ${v}×` : '界面缩放跟随屏宽自动');
+}
+
+/* ---- 控制中心（独立窗口） ----
+ *
+ * 添加组件 / 关于 / 天气地区 / 分组命名全部搬进控制中心。桌面层只保留
+ * 「打开哪一页、弹哪个框」这一个入口；组件库、关于页、弹层不再各画一套。
+ */
+function openHub(view, dialog) {
+  invoke('open_hub', { view, dialog: dialog || null }).catch((e) =>
+    toast(`打开控制中心失败：${e?.message || e}`)
+  );
+}
+
+function openGal() {
+  openHub('gallery');
+}
+
+function openAboutPanel() {
+  openHub('about');
+}
+
+/** 兼容旧调用点与调试探针：天气地区现在在控制中心里改。 */
+function pickPlace() {
+  openHub('settings', { type: 'weather', compact: true });
+}
+
+/** 兼容调试探针（FY_UI=group）：分组命名统一走控制中心。 */
+function promptInput() {
+  openHub('groups', { type: 'groupCreate', compact: true });
+  return Promise.resolve(null);
 }
 
 /* ---- 上下文菜单 ---- */
@@ -1123,158 +1193,9 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-/* ---- 弹层 ----
- *
- * 窗口平时是「按热区穿透」的：只有卡片和面板所在矩形接收鼠标，其余位置直接
- * 交给桌面。弹层挂到页面中央，那块区域不在任何热区里，所以鼠标一点就穿到
- * 桌面上去了——表现就是「输入框还在，但再也打不了字」。
- * 因此弹层打开期间必须把 force 打开，让整窗接管鼠标，关闭时再还原。
- */
-function modal(title, bodyHtml, opts = {}) {
-  return new Promise((resolve) => {
-    const wasForce = S.force;
-    S.force = true;
-    updateHit();
-
-    const wrap = document.createElement('div');
-    wrap.className = 'modal';
-    wrap.innerHTML = `
-      <div class="modal-card">
-        <div class="modal-title">
-          <span>${escapeHtml(title)}</span>
-          <button class="modal-x" data-x title="关闭 (Esc)" aria-label="关闭">
-            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>
-          </button>
-        </div>
-        ${bodyHtml}
-        <div class="modal-foot">
-          <button class="ebtn" data-close>${escapeHtml(opts.cancelText || '取消')}</button>
-          ${opts.okText ? `<button class="ebtn primary" data-ok>${escapeHtml(opts.okText)}</button>` : ''}
-        </div>
-      </div>`;
-    document.body.appendChild(wrap);
-
-    const disposeDrag = makeDraggable(
-      wrap.querySelector('.modal-card'),
-      wrap.querySelector('.modal-title'),
-      'modal'
-    );
-
-    const close = (v) => {
-      disposeDrag();
-      wrap.remove();
-      S.force = wasForce;
-      updateHit();
-      resolve(v);
-    };
-
-    // 点遮罩 = 取消。浮层打开期间整窗接管鼠标（见函数头注释），
-    // 遮罩若不吃这一下，桌面就完全点不动了；判定「按下也在遮罩上」才关，
-    // 从窗口里拖出去松手不会误关。
-    closeOnBackdrop(wrap, () => close(null));
-    wrap.querySelector('[data-close]').onclick = () => close(null);
-    wrap.querySelector('[data-x]').onclick = () => close(null);
-    wrap.querySelector('[data-ok]')?.addEventListener('click', () => close(opts.onOk?.(wrap) ?? null));
-    wrap.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') close(null);
-    });
-
-    opts.mount?.(wrap, close);
-  });
-}
-
-/* ---- 输入框（Tauri 里没有 window.prompt） ---- */
-function promptInput(title, placeholder, value = '') {
-  return modal(
-    title,
-    `<input class="modal-input" placeholder="${escapeHtml(placeholder || '')}" value="${escapeHtml(value)}" />`,
-    {
-      okText: '确定',
-      onOk: (wrap) => wrap.querySelector('.modal-input').value.trim() || null,
-      mount: (wrap, close) => {
-        const input = wrap.querySelector('.modal-input');
-        input.focus();
-        input.select();
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') close(input.value.trim() || null);
-        });
-      }
-    }
-  );
-}
-
-/* ---- 天气地区选择：支持省 / 市 / 区县 ---- */
-function pickPlace() {
-  return modal(
-    '设置天气地区',
-    `<div class="modal-hint">支持省 / 市 / 区县，如「西湖区」。回车搜索。</div>
-     <div class="modal-row">
-       <input class="modal-input" placeholder="输入地名" value="${escapeHtml(S.cfg.weather?.city || '')}" />
-       <button class="ebtn primary" data-search>搜索</button>
-     </div>
-     <div class="place-list" hidden></div>`,
-    {
-      okText: '',
-      mount: (wrap, close) => {
-        const input = wrap.querySelector('.modal-input');
-        const list = wrap.querySelector('.place-list');
-
-        const search = async () => {
-          const q = input.value.trim();
-          if (!q) return;
-          list.hidden = false;
-          list.innerHTML = `<div class="place-tip">搜索中…</div>`;
-          let rows = [];
-          try {
-            rows = await invoke('geo_search', { q });
-          } catch (err) {
-            list.innerHTML = `<div class="place-tip">搜索失败：${escapeHtml(String(err?.message || err))}</div>`;
-            return;
-          }
-          if (!rows.length) {
-            list.innerHTML = `<div class="place-tip">没找到「${escapeHtml(q)}」。试试只留区县名，如「西湖区」</div>`;
-            return;
-          }
-          list.innerHTML = rows
-            .map(
-              (p, i) => `<button class="place-item" data-i="${i}">
-                <b>${escapeHtml(p.name)}</b><span>${escapeHtml(p.label)}</span></button>`
-            )
-            .join('');
-          list.querySelectorAll('.place-item').forEach((btn) => {
-            btn.onclick = async () => {
-              const p = rows[Number(btn.dataset.i)];
-              close(null);
-              try {
-                await invoke('set_weather_place', {
-                  label: p.label,
-                  name: p.name,
-                  lat: p.lat,
-                  lon: p.lon
-                });
-                // 地区是后端写的，拉回来同步 rev，否则下次回传会覆盖成旧地区
-                await syncConfig();
-                toast(`天气地区已改为「${p.name}」`);
-              } catch (err) {
-                toast(`设置失败：${err?.message || err}`);
-              }
-            };
-          });
-        };
-
-        input.focus();
-        input.select();
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            search();
-          }
-        });
-        wrap.querySelector('[data-search]').onclick = search;
-      }
-    }
-  );
-}
+/* 桌面层不再有 modal / promptInput / 天气弹层：
+ * 天气地区、分组命名、关于、组件库都搬进了控制中心（hub 窗口），
+ * 那里有真正的输入焦点，也不用为了一个输入框把整窗鼠标强行接管。 */
 
 let toastTimer = 0;
 function toast(msg) {
@@ -1296,8 +1217,6 @@ function bindGlobalEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (S.about) return S.about.close();
-      if (S.gallery) return S.gallery.close();
       if (!$('#menu').hidden) return hideMenu();
       if (S.edit) setEdit(false);
     }
@@ -1336,8 +1255,16 @@ function bindGlobalEvents() {
 
   // 启动时后台检查到新版本：只提示一句，不弹窗抢焦点
   listen('update:available', (e) => {
-    if (e.payload?.has_update) toast(updateHint(e.payload));
+    if (e.payload?.has_update) {
+      toast(`发现新版本 v${e.payload.latest}，左键托盘 → 关于 里可更新`);
+    }
   });
+
+  // 控制中心发来的操作：布局、空位、热区、落盘都在这边执行，算法只有一份
+  listen('hub:action', (e) => handleHubAction(e.payload));
+
+  // 后端改过配置（天气地区、分组、自启、自动更新、以及本窗口自己的落盘）
+  listen('config:changed', (e) => onConfigChanged(e.payload));
 
   // 干净截图时后端会重抓一张不含其它窗口的底图，这里直接换掉
   listen('glass:update', (e) => {

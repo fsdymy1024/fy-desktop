@@ -3,7 +3,7 @@
 use crate::config::Config;
 use crate::consts::MATERIALS;
 use crate::desktop::{self, glass, icons, DesktopView};
-use crate::state::AppState;
+use crate::state::{AppState, HubPending};
 use crate::weather::{self, Weather};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -46,6 +46,142 @@ pub fn boot(state: State<'_, AppState>) -> Boot {
     }
 }
 
+/* ---------------------------- 控制中心（hub） ----------------------------
+   控制中心是独立的普通窗口（label = hub）：托盘左键呼出，桌面上的卡片、
+   收纳面板完全不受影响。它不直接改配置的布局部分——把「加组件 / 换尺寸 /
+   换材质 / 换缩放」当意图发给 main，由桌面窗口用自己那套空位、吸附、热区
+   逻辑执行，避免两份布局算法各自漂移。 */
+
+#[derive(Serialize)]
+pub struct HubBoot {
+    pub config: Config,
+    pub version: String,
+    pub root: String,
+    pub autostart: bool,
+    pub palette: Vec<String>,
+    /// 窗口还没加载完时攒下的「打开哪一页 / 弹哪个框」
+    pub pending: Option<serde_json::Value>,
+}
+
+#[tauri::command]
+pub fn hub_boot(state: State<'_, AppState>, pending: State<'_, HubPending>) -> HubBoot {
+    let cfg = state.config();
+    let pending = pending.0.lock().ok().and_then(|mut g| g.take());
+    HubBoot {
+        root: desktop::root_dir(&cfg).to_string_lossy().to_string(),
+        autostart: crate::autostart::is_enabled(),
+        palette: crate::consts::GROUP_COLORS.iter().map(|c| c.to_string()).collect(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        config: cfg,
+        pending,
+    }
+}
+
+/// 显示并聚焦控制中心。托盘点击带来前台权限，set_focus 通常能生效。
+///
+/// 窗口在 tauri.conf.json 里声明，启动时以 visible:false 建好：
+/// 运行时再建第二套 WebView2 会拿到一个不绘制内容的空白窗口（这台机器上实测），
+/// 而两套窗口的 additionalBrowserArgs 不一致又会直接创建失败。
+pub fn show_hub(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("hub") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// 打开控制中心，可指定页面与要弹出的框。
+/// 事件用于「窗口已加载」的常规路径，pending 用于「窗口还没加载完」的冷启动。
+#[tauri::command]
+pub fn open_hub(
+    app: AppHandle,
+    pending: State<'_, HubPending>,
+    view: Option<String>,
+    dialog: Option<serde_json::Value>,
+) {
+    let intent = serde_json::json!({ "view": view, "dialog": dialog });
+    if let Ok(mut g) = pending.0.lock() {
+        *g = Some(intent.clone());
+    }
+    open_hub_intent(&app, intent);
+}
+
+/// 命令与调试入口共用：先攒 pending（给还没加载完的页面），再广播并显示。
+pub fn open_hub_intent(app: &AppHandle, intent: serde_json::Value) {
+    if let Some(p) = app.try_state::<HubPending>() {
+        if let Ok(mut g) = p.0.lock() {
+            *g = Some(intent.clone());
+        }
+    }
+    let _ = app.emit("hub:intent", &intent);
+    show_hub(app);
+}
+
+/// 控制中心的日志出口。WebView2 的 console 不会进终端，自检时靠它确认脚本跑到哪一步。
+#[tauri::command]
+pub fn hub_log(msg: String) {
+    eprintln!("[hub:js] {msg}");
+}
+
+#[tauri::command]
+pub fn hide_hub(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("hub") {
+        let _ = w.hide();
+    }
+}
+
+/// 托盘左键：显示 / 收起。
+///
+/// Windows 下双击托盘会连发两次 Click——第一次收起、第二次又打开，
+/// 用户看到的是闪一下。350ms 内的第二次点击只当作「确保显示」。
+pub fn toggle_hub(app: &AppHandle) {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    static LAST: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+
+    let now = Instant::now();
+    let double = {
+        let m = LAST.get_or_init(|| Mutex::new(None));
+        let mut g = crate::state::lock(m);
+        let d = g
+            .map(|t| now.duration_since(t) < Duration::from_millis(350))
+            .unwrap_or(false);
+        *g = Some(now);
+        d
+    };
+    if double {
+        show_hub(app);
+        return;
+    }
+    if let Some(w) = app.get_webview_window("hub") {
+        let visible = w.is_visible().unwrap_or(false);
+        let focused = w.is_focused().unwrap_or(false);
+        if visible && focused {
+            let _ = w.hide();
+        } else {
+            show_hub(app);
+        }
+    } else {
+        show_hub(app);
+    }
+}
+
+/// 控制中心发来的操作。转发给桌面窗口执行（见上面注释）。
+#[tauri::command]
+pub fn hub_action(app: AppHandle, action: serde_json::Value) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.emit("hub:action", action);
+    }
+}
+
+/// 把后端当前配置推给所有窗口。控制中心靠它刷新列表与选中态，
+/// 桌面窗口靠它同步「开机自启 / 自动更新 / 天气地区 / 分组」这些后端改过的字段。
+fn broadcast_config(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let _ = app.emit("config:changed", state.config());
+    }
+}
+
 /// 渲染层就绪次数。进程内累加，用来区分「就绪一次」和「页面被重建了 N 次」。
 /// WebView2 在渲染进程被回收后会自动重新加载页面，前端看不出原因，
 /// 只有把计数和导航类型打出来才能判断是重载还是崩溃恢复。
@@ -82,7 +218,7 @@ pub fn ui_ready(app: AppHandle, nav: Option<String>, boots: Option<u32>) {
 /// 版本对不上说明中间有命令改过配置，这时分组与天气以后端为准——否则一次防抖
 /// 回传就会把「刚建好的分组」「刚改完的地区」抹掉。
 #[tauri::command]
-pub fn save_config(state: State<'_, AppState>, mut config: Config) -> Config {
+pub fn save_config(app: AppHandle, state: State<'_, AppState>, mut config: Config) -> Config {
     let design = *crate::state::lock(&state.design);
     crate::config::normalize(&mut config, design.0, design.1);
 
@@ -99,7 +235,9 @@ pub fn save_config(state: State<'_, AppState>, mut config: Config) -> Config {
     if stale {
         eprintln!("[config] 回传的 rev 过期（{}），保留后端的分组与天气", config.rev);
     }
-    state.replace_config(config)
+    let out = state.replace_config(config);
+    broadcast_config(&app);
+    out
 }
 
 #[tauri::command]
@@ -266,6 +404,7 @@ pub fn create_group(app: AppHandle, state: State<'_, AppState>, name: String) ->
     std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败: {e}"))?;
     state.with_config(|c| c.organizer.groups.push(group));
     refresh(&app);
+    broadcast_config(&app);
     Ok(id)
 }
 
@@ -312,6 +451,7 @@ pub fn rename_group(
         }
     });
     refresh(&app);
+    broadcast_config(&app);
     Ok(())
 }
 
@@ -337,6 +477,7 @@ pub fn move_group(app: AppHandle, state: State<'_, AppState>, id: String, delta:
         return Err(e);
     }
     refresh(&app);
+    broadcast_config(&app);
     Ok(())
 }
 
@@ -361,6 +502,7 @@ pub fn delete_group(app: AppHandle, state: State<'_, AppState>, id: String) -> R
     }
     state.with_config(|c| c.organizer.groups.retain(|g| g.id != id));
     refresh(&app);
+    broadcast_config(&app);
     Ok(moved)
 }
 
@@ -405,7 +547,21 @@ pub fn glass_snapshot(app: AppHandle) -> Result<String, String> {
         .get_webview_window("main")
         .ok_or_else(|| "窗口不存在".to_string())?;
     let hwnd = hwnd_of(&win);
-    match glass::snapshot(hwnd, false) {
+
+    // 控制中心开着时也要从底图里排除，否则玻璃卡会透出它的影子
+    let hub = app
+        .get_webview_window("hub")
+        .filter(|w| w.is_visible().unwrap_or(false))
+        .map(|w| hwnd_of(&w));
+    if let Some(h) = hub {
+        glass::exclude_hwnd(h);
+    }
+    let shot = glass::snapshot(hwnd, false);
+    if let Some(h) = hub {
+        glass::include_hwnd(h);
+    }
+
+    match shot {
         Ok(url) => Ok(url),
         Err(e) => {
             eprintln!("[glass] 抓屏失败: {e} (hwnd={hwnd:#x})");
@@ -418,12 +574,13 @@ pub fn glass_snapshot(app: AppHandle) -> Result<String, String> {
 /// 下次启动 `lib.rs` 会按 `cfg.autostart` 同步注册表，配置落后就会把用户的手动
 /// 改动覆盖回去（比如用任务管理器禁用过启动项）。
 #[tauri::command]
-pub fn set_autostart(state: State<'_, AppState>, on: bool) -> Result<bool, String> {
+pub fn set_autostart(app: AppHandle, state: State<'_, AppState>, on: bool) -> Result<bool, String> {
     crate::autostart::set(on)?;
     let real = crate::autostart::is_enabled();
     if state.config().autostart != real {
         state.with_config(|c| c.autostart = real);
     }
+    broadcast_config(&app);
     Ok(real)
 }
 
@@ -469,6 +626,7 @@ pub fn set_weather_place(
         c.weather.city = name.clone();
         c.weather.admin = label.clone();
     });
+    broadcast_config(&app);
     let cfg = state.config();
     tauri::async_runtime::spawn(async move {
         if let Some(w) = weather::fetch(&cfg).await {
@@ -492,12 +650,13 @@ pub fn weather_refresh(app: AppHandle, state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub fn set_material(state: State<'_, AppState>, material: String) {
+pub fn set_material(app: AppHandle, state: State<'_, AppState>, material: String) {
     if !MATERIALS.contains(&material.as_str()) {
         eprintln!("[config] 忽略非法材质：{material}");
         return;
     }
     state.with_config(|c| c.material = material);
+    broadcast_config(&app);
 }
 
 #[tauri::command]
@@ -541,8 +700,9 @@ pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn set_auto_update(state: State<'_, AppState>, on: bool) {
+pub fn set_auto_update(app: AppHandle, state: State<'_, AppState>, on: bool) {
     state.with_config(|c| c.auto_update = on);
+    broadcast_config(&app);
 }
 
 /// 自检时把布局坐标落盘，方便无人值守核对
@@ -555,9 +715,8 @@ pub fn dev_dump(json: String) {
 }
 
 fn refresh(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.emit("desktop:changed", ());
-    }
+    // 广播：控制中心开着时也要刷新分组计数
+    let _ = app.emit("desktop:changed", ());
 }
 
 fn pick_color(i: usize) -> String {

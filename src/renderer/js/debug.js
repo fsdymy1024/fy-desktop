@@ -139,27 +139,9 @@ function dumpLayout(S) {
         items: $('#menu')?.querySelectorAll('button').length || 0,
         text: $('#menu')?.innerText?.slice(0, 200) || ''
       },
-      // 浮层调试：窗口是否还在、拖到哪了、配色是否跟着全局材质
-      floats: {
-        body: document.body.dataset.material,
-        gallery: {
-          hidden: $('#gallery')?.hidden,
-          mat: $('#gallery .gal')?.dataset.mat || '',
-          transform: $('#gallery .gal')?.style.transform || '',
-          bg: $('#gallery .gal') ? getComputedStyle($('#gallery .gal')).backgroundColor : ''
-        },
-        about: {
-          hidden: $('#about')?.hidden,
-          transform: $('#about .ab')?.style.transform || '',
-          bg: $('#about .ab') ? getComputedStyle($('#about .ab')).backgroundColor : ''
-        },
-        modal: {
-          count: document.querySelectorAll('.modal').length,
-          transform: document.querySelector('.modal-card')?.style.transform || '',
-          bg: document.querySelector('.modal-card') ? getComputedStyle(document.querySelector('.modal-card')).backgroundColor : ''
-        }
-      },
-      probe: { float: S.floatProbe || null, mat: S.matProbe || null, tray: S.trayProbe || null },
+      // 组件库 / 关于 / 天气弹层都在控制中心（独立窗口）里，主窗口只留全局材质
+      floats: { body: document.body.dataset.material },
+      probe: { tray: S.trayProbe || null },
       err: S.err || '',
       bridge: dbg,
       shot: !!S.shot
@@ -175,14 +157,7 @@ function dumpLayout(S) {
  * @param {object} api main.js 暴露的界面动作
  */
 export function installDebug(S, api) {
-  const {
-    pickPlace,
-    setEdit,
-    openGal,
-    openAboutPanel,
-    promptInput,
-    loadGlass
-  } = api;
+  const { setEdit, loadGlass } = api;
   const dump = () => dumpLayout(S);
   const uitest = S.uitest || '';
 
@@ -196,33 +171,8 @@ export function installDebug(S, api) {
     });
   }
 
-  // 自动化验证会把浮层拖到奇怪的位置并存进 localStorage，
-  // 跑一次 resetpos 清掉，免得正式使用时窗口默认不在正中。
-  if (uitest === 'resetpos') {
-    ['gallery', 'about', 'modal'].forEach((k) => {
-      try {
-        localStorage.removeItem(`fy.float.${k}`);
-      } catch (_) {
-        // localStorage 被禁就算了
-      }
-    });
-  }
-
-  // FY_UI=place|group 时自动打开对应弹层，方便截图核对样式与命中区
-  if (uitest === 'place') setTimeout(() => pickPlace(), 400);
-
-  // FY_UI=placesearch：再自动搜一次，用来核对结果项的对比度与行高
-  if (uitest === 'placesearch') {
-    setTimeout(() => {
-      pickPlace();
-      setTimeout(() => {
-        const input = document.querySelector('.modal .modal-input');
-        if (!input) return;
-        input.value = '西湖区';
-        document.querySelector('.modal [data-search]')?.click();
-      }, 600);
-    }, 400);
-  }
+  // 天气地区 / 分组命名 / 组件库 / 关于已经搬进控制中心（独立窗口），
+  // 对应的 FY_UI 探针一并移除，避免继续依赖已删除的浮层 DOM。
 
   // FY_UI=edit：进编辑模式，用来核对虚线框、参考线这些只在编辑态出现的东西
   if (uitest === 'edit') setTimeout(() => setEdit(true), 400);
@@ -272,87 +222,7 @@ export function installDebug(S, api) {
     );
   }
 
-  if (uitest === 'group') setTimeout(() => promptInput('新建分组', '例如：设计素材'), 400);
-
-  // FY_UI=gal：打开组件库；FY_UI=menu：在首张卡片上弹右键菜单
-  // FY_UI=galadd / menusize：再点一下，验证「按档位添加」「右键换档」真的生效
-  if (uitest === 'gal') setTimeout(() => openGal(), 500);
-
-  if (uitest === 'galadd') {
-    setTimeout(() => {
-      openGal();
-      setTimeout(
-        () => document.querySelector('#gallery .gcard[data-kind="weather"][data-size="s"]')?.click(),
-        700
-      );
-    }, 500);
-  }
-
-  // FY_UI=galmat：打开组件库点一下「玻璃」，验证材质真的落到了底层卡片上
-  if (uitest === 'galmat') {
-    setTimeout(() => {
-      openGal();
-      setTimeout(() => document.querySelector('#gallery .matbtn[data-mat="glass"]')?.click(), 800);
-    }, 500);
-  }
-
-  // FY_UI=matall：验证「改材质 = 所有元素一起变」。切暮色后关掉组件库、
-  // 打开关于页，dump 里可同时看到 body / 全部卡片 / 组件库 / 关于页的材质与底色。
-  // cardmats 是 v0.9 用的旧名，保留兼容。
-  if (uitest === 'matall' || uitest === 'cardmats') {
-    setTimeout(() => {
-      openGal();
-      setTimeout(() => {
-        document.querySelector('#gallery .matbtn[data-mat="dusk"]')?.click();
-        setTimeout(() => {
-          S.gallery?.close();
-          openAboutPanel();
-        }, 900);
-      }, 700);
-    }, 500);
-  }
-
-  // FY_UI=floatwin：验证浮层「点遮罩关 / 拖动不误关 / x 也关」
-  if (uitest === 'floatwin') {
-    setTimeout(() => {
-      openAboutPanel();
-      setTimeout(() => {
-        const host = $('#about');
-        const M = (t, o) => new MouseEvent(t, { bubbles: true, button: 0, ...o });
-        // 按下与点击都落在遮罩上 → 应该关闭（否则桌面会被透明板锁死）
-        host.dispatchEvent(M('mousedown', {}));
-        host.dispatchEvent(M('click', {}));
-        const closedByBackdrop = host.hidden;
-        openAboutPanel();
-        setTimeout(() => {
-          const h2 = $('#about');
-          // 从标题栏按下、拖到遮罩上松手：不应关闭
-          h2.querySelector('.ab-head').dispatchEvent(M('mousedown', { clientX: 200, clientY: 200 }));
-          document.dispatchEvent(M('mousemove', { clientX: 300, clientY: 260 }));
-          document.dispatchEvent(M('mouseup', {}));
-          h2.dispatchEvent(M('click', {}));
-          const stayedAfterDrag = !h2.hidden;
-          const moved = h2.querySelector('.ab')?.style.transform || '';
-          h2.querySelector('.ab-close')?.click();
-          const closedByX = h2.hidden;
-          openAboutPanel();
-          S.floatProbe = { closedByBackdrop, stayedAfterDrag, moved, closedByX };
-          setTimeout(() => dump(), 250);
-        }, 400);
-      }, 700);
-    }, 500);
-  }
-
-  if (uitest === 'about') setTimeout(() => openAboutPanel(), 500);
-
-  // FY_UI=aboutcheck：打开关于并点一次「检查更新」，验证 GitHub 那条链路
-  if (uitest === 'aboutcheck') {
-    setTimeout(() => {
-      openAboutPanel();
-      setTimeout(() => document.querySelector('#about [data-act="check"]')?.click(), 600);
-    }, 500);
-  }
-
+  // FY_UI=menu：在首张卡片上弹右键菜单；menusize：点一下换档
   if (uitest === 'menu') setTimeout(() => openFirstCardMenu(), 500);
 
   if (uitest === 'menusize') {

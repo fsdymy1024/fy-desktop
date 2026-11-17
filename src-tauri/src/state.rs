@@ -37,6 +37,13 @@ pub struct HitState {
     pub last_down: bool,
 }
 
+/// 控制中心还没加载完时先攒着的「打开哪一页 / 弹哪个框」请求。
+///
+/// 托盘点击与桌面卡片双击都可能比 hub 的 WebView 先到；只发事件会丢，
+/// 所以命令里同时存一份，页面启动时通过 `hub_boot` 取走。
+#[derive(Default)]
+pub struct HubPending(pub Mutex<Option<serde_json::Value>>);
+
 pub struct AppState {
     pub cfg: Mutex<Config>,
     /// 界面缩放比，由屏幕宽度推出，前端也按同一公式算

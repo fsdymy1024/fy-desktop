@@ -29,6 +29,27 @@ export const dbg = {
 
 export const invoke = (...args) => T.core.invoke(...args);
 
+/** 启动期专用 invoke。
+ *
+ *  后端在 `setup()` 里才 `app.manage(AppState)`，而 WebView2 可能在 setup 还没跑完
+ *  时就已经把页面加载完并发出 `boot` —— 此时命令会以
+ *  「state not managed for field `state`」被拒。这是纯粹的时序竞争：
+ *  重试一次就好了，但一次都不重试的后果是整层渲染失败，
+ *  用户看到的是空桌面 + 「渲染层没有启动」，且不会自愈。
+ *
+ *  只对「状态还没注册」这一类错误重试，其它错误立刻抛出，不会把真错误藏起来。 */
+export async function invokeRetry(name, args, tries = 10, delay = 100) {
+  for (let i = 0; ; i++) {
+    try {
+      return await invoke(name, args);
+    } catch (err) {
+      const msg = String(err?.message ?? err);
+      if (i + 1 >= tries || !/not managed/i.test(msg)) throw err;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 /** 所有订阅返回的退订函数。页面被 WebView2 回收重建时会重新跑一遍模块，
  *  旧订阅还在的话同一个事件会回调两次（热区/指标都会重复处理），
  *  所以这里统一记账，pagehide 时一次性退订。 */

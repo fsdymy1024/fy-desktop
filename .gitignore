@@ -13,6 +13,7 @@ build/
 *.log
 npm-debug.log*
 docs/*.json
+docs/*.png
 .tmp/
 
 # 系统
