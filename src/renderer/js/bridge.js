@@ -29,6 +29,11 @@ export const dbg = {
 
 export const invoke = (...args) => T.core.invoke(...args);
 
+/** 所有订阅返回的退订函数。页面被 WebView2 回收重建时会重新跑一遍模块，
+ *  旧订阅还在的话同一个事件会回调两次（热区/指标都会重复处理），
+ *  所以这里统一记账，pagehide 时一次性退订。 */
+const SUBS = [];
+
 export const listen = (name, cb) => {
   const p = T.event.listen(name, (e) => {
     dbg.hits++;
@@ -38,8 +43,16 @@ export const listen = (name, cb) => {
       dbg.failed.push(`${name} handler: ${err?.message || err}`);
     }
   });
+  SUBS.push(p);
   p.then(() => dbg.registered.push(name)).catch((err) =>
     dbg.failed.push(`${name}: ${err?.message || err}`)
   );
   return p;
 };
+
+/** 退订本模块登记过的全部事件。幂等。 */
+export function unlistenAll() {
+  for (const p of SUBS.splice(0)) {
+    p.then((un) => un()).catch(() => {});
+  }
+}

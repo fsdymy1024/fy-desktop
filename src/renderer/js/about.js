@@ -34,7 +34,7 @@ export function openAbout(host, opts) {
   const { version, cfg, onClose, onAutoUpdate } = opts;
 
   host.innerHTML = `
-    <div class="ab">
+    <div class="ab" tabindex="-1" role="dialog" aria-label="关于 fy-desktop">
       <div class="ab-head">
         <div class="ab-logo">fy</div>
         <div class="ab-id">
@@ -49,6 +49,7 @@ export function openAbout(host, opts) {
         <div class="ab-row"><span>当前版本</span><b>v${esc(version)}</b></div>
         <div class="ab-row"><span>更新源</span><a data-act="repo">https://github.com/fsdymy1024/fy-desktop</a></div>
         <div class="ab-row"><span>安装位置</span><a data-act="conf">打开配置与日志目录</a></div>
+        <div class="ab-row"><span>代码签名</span><b>自签证书（未受信任根，Windows 会提示未知发布者）</b></div>
 
         <div class="ab-sec">
           <div class="ab-sec-head">
@@ -65,10 +66,13 @@ export function openAbout(host, opts) {
           </label>
         </div>
       </div>
-      <div class="ab-foot">MIT License · 数据只存在本机，不上传任何内容</div>
+      <div class="ab-foot">Apache-2.0 License · 数据只存在本机，不上传任何内容</div>
     </div>`;
 
   host.hidden = false;
+  // 打开时把焦点移入浮层、关闭时归还
+  const prevFocus = document.activeElement;
+  host.querySelector('.ab')?.focus();
 
   const disposeDrag = makeDraggable(
     host.querySelector('.ab'),
@@ -87,6 +91,7 @@ export function openAbout(host, opts) {
     host.hidden = true;
     host.innerHTML = '';
     document.removeEventListener('keydown', onKey);
+    prevFocus?.focus?.();
     onClose?.();
   };
 

@@ -16,6 +16,8 @@ const ICON_CACHE = new Map();
 let renderToken = 0;
 let looseExpanded = false;
 
+/** 兜底调色板。正常由后端 `boot.palette` 下发（和新建分组取色同一套），
+ *  只有拿不到时才用这份，避免加载早期出现没有颜色的色块。 */
 const PALETTE = ['#3d8bf0', '#b16ce0', '#2fa27c', '#e2712c', '#8d9aa6', '#d94f70', '#0f9bb0'];
 
 function hash(s) {
@@ -24,16 +26,18 @@ function hash(s) {
   return h;
 }
 
-function placeholder(item, groupId) {
+function placeholder(item, groupId, palette) {
   const letter = (item.name.replace(/\.[^.]+$/, '').trim()[0] || '·').toUpperCase();
-  const color = PALETTE[hash(item.name + groupId) % PALETTE.length];
+  const color = palette[hash(item.name + groupId) % palette.length];
   return `<span class="ph" style="background:${color}">${esc(letter)}</span>`;
 }
 
-function cellHtml(item, groupId, extraClass = '') {
+function cellHtml(item, groupId, palette, extraClass = '') {
+  // 格子可 Tab 聚焦、Enter 打开：纯鼠标操作对键盘用户等于不可用
+  const label = esc(item.name);
   return `<div class="cell ${extraClass}" data-path="${esc(item.path)}" data-group="${esc(groupId)}"
-      draggable="true" title="${esc(item.name)}">
-      <div class="ic" data-path="${esc(item.path)}">${placeholder(item, groupId)}</div>
+      draggable="true" title="${label}" aria-label="${label}" tabindex="0">
+      <div class="ic" data-path="${esc(item.path)}">${placeholder(item, groupId, palette)}</div>
       <span class="lb">${esc(item.name.replace(/\.[^.]+$/, ''))}</span>
     </div>`;
 }
@@ -46,13 +50,13 @@ function padCells(count) {
     .join('');
 }
 
-function shelfHtml(group, folded, isLoose) {
+function shelfHtml(group, folded, isLoose, palette) {
   const items = group.items || [];
   const shown = isLoose && !looseExpanded ? items.slice(0, LOOSE_PREVIEW) : items;
   const more = items.length - shown.length;
 
   const cells =
-    shown.map((it) => cellHtml(it, group.id)).join('') +
+    shown.map((it) => cellHtml(it, group.id, palette)).join('') +
     padCells(shown.length) +
     (more > 0
       ? `<div class="cell" data-more="1" title="展开全部 ${items.length} 项">
@@ -81,6 +85,9 @@ function shelfHtml(group, folded, isLoose) {
 export function renderOrganizer(el, cfg, view, handlers) {
   const token = ++renderToken;
   const scrollTop = el.querySelector('.shelves')?.scrollTop || 0;
+  // 配色以后端下发的为准，前端这份只是兜底
+  const palette =
+    Array.isArray(handlers?.palette) && handlers.palette.length ? handlers.palette : PALETTE;
 
   const groups = view
     ? view.groups.map((g) => ({ ...g }))
@@ -124,8 +131,8 @@ export function renderOrganizer(el, cfg, view, handlers) {
         </div>
       </div>
       <div class="shelves">
-        ${groups.map((g) => shelfHtml(g, foldedIds.has(g.id), false)).join('')}
-        ${shelfHtml(loose, false, true)}
+        ${groups.map((g) => shelfHtml(g, foldedIds.has(g.id), false, palette)).join('')}
+        ${shelfHtml(loose, false, true, palette)}
       </div>
       <div class="org-foot">
         <span>桌面还有 <b>${looseTotal}</b> 项未收纳</span>
@@ -194,6 +201,15 @@ export function renderOrganizer(el, cfg, view, handlers) {
 
     const cell = e.target.closest('.cell[data-path]');
     if (cell) handlers.open(cell.dataset.path);
+  };
+
+  // 键盘：格子可 Tab 聚焦，Enter / 空格等于单击打开
+  el.onkeydown = (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const cell = e.target.closest('.cell[data-path]');
+    if (!cell) return;
+    e.preventDefault();
+    handlers.open(cell.dataset.path);
   };
 
   el.oncontextmenu = (e) => {

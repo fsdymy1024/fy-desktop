@@ -5,9 +5,9 @@
  * 所以后端报上来的热区要乘 devicePixelRatio，拖拽位移要除以 scale。
  */
 
-import { invoke, listen, dbg } from './bridge.js';
+import { invoke, listen, unlistenAll } from './bridge.js';
 import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf, GAP } from './widgets.js';
-import { renderOrganizer, groupAtPoint, resetLoose } from './organizer.js';
+import { renderOrganizer, groupAtPoint, resetLoose, clearIconCache } from './organizer.js';
 import { openGallery } from './gallery.js';
 import { openAbout, updateHint } from './about.js';
 import { makeDraggable, closeOnBackdrop } from './floatwin.js';
@@ -27,7 +27,9 @@ const S = {
   gallery: null,
   about: null,
   version: '',
-  shotMode: false
+  shotMode: false,
+  /// 分组配色由后端下发（boot.palette），前端不再自己写一份
+  palette: []
 };
 
 /* 吸附网格。网格粒度 = 最小缝隙 GAP = 6（widgets.js 导出，和尺寸同源）：
@@ -54,6 +56,7 @@ async function boot() {
   S.scale = b.scale || 1;
   S.version = b.version || '';
   S.shotMode = !!b.shot;
+  S.palette = Array.isArray(b.palette) ? b.palette : [];
 
   layoutStage();
   applyMaterial();
@@ -86,183 +89,28 @@ async function boot() {
   refreshDesktop().catch((e) => console.warn('[desk] 首屏加载失败', e));
   if (!S.shotMode) loadGlass();
 
-  if (S.shotMode) {
-    // 等玻璃底图就绪再落盘，否则 json 里 glass 永远是 false
-    // 两拍：400ms 那次拿布局与底图状态，6s 那次带上真实的指标/天气值
-    // （第一拍太早，counters 全是 0，看不出「数据到底有没有到」）
-    loadGlass().then(() => {
-      setTimeout(dumpLayout, 400);
-      setTimeout(dumpLayout, 6000);
-    });
-  }
+  // 截图 / 自检的调试分支统一收进 debug.js，只在需要时动态加载：
+  // 正常运行时这些代码既不会执行也不会被解析，main.js 只留业务流程。
+  if (S.shotMode || S.uitest) loadDebug();
+}
 
-  // 调试：自动化验证会把窗口拖到奇怪的位置并存进 localStorage，
-  // 跑一次 resetpos 清掉，免得正式使用时窗口默认不在正中。
-  if (b.uitest === 'resetpos') {
-    ['gallery', 'about', 'modal'].forEach((k) => {
-      try {
-        localStorage.removeItem(`fy.float.${k}`);
-      } catch (_) {
-        // localStorage 被禁就算了
-      }
-    });
-  }
-  // 调试：FY_UI=place|group 时自动打开对应弹层，方便截图核对样式与命中区
-  if (b.uitest === 'place') setTimeout(() => pickPlace(), 400);
-  // FY_UI=placesearch：再自动搜一次，用来核对结果项的对比度与行高
-  if (b.uitest === 'placesearch')
-    setTimeout(() => {
-      pickPlace();
-      setTimeout(() => {
-        const input = document.querySelector('.modal .modal-input');
-        if (!input) return;
-        input.value = '西湖区';
-        document.querySelector('.modal [data-search]')?.click();
-      }, 600);
-    }, 400);
-  // FY_UI=edit：进编辑模式，用来核对虚线框、参考线这些只在编辑态出现的东西
-  if (b.uitest === 'edit') setTimeout(() => setEdit(true), 400);
-  // FY_UI=orgfold：进编辑态（右上角工具栏才可见）再点一次「全部折叠/展开」，
-  // 用来核对按钮图标和整列分组是否真的收起
-  if (b.uitest === 'orgfold')
-    setTimeout(() => {
-      setEdit(true);
-      waitPanel((panel) => {
-        const btn = panel.querySelector('[data-act="fold-all"]');
-        S.foldProbe = { found: !!btn, before: (S.cfg.organizer.folded || []).length };
-        btn?.click();
-        S.foldProbe.after = (S.cfg.organizer.folded || []).length;
-        S.foldProbe.shelves = panel.querySelectorAll('.shelf.folded').length;
-        setTimeout(() => dumpLayout(), 200);
+/** 动态加载调试探针（FY_SHOT / FY_UI）。失败只影响自检，不影响正常使用。 */
+function loadDebug() {
+  import('./debug.js')
+    .then((m) => {
+      const api = m.installDebug(S, {
+        pickPlace,
+        setEdit,
+        openGal,
+        openAboutPanel,
+        promptInput,
+        loadGlass
       });
-    }, 400);
-  // FY_UI=orgmenu：在面板里右键，核对菜单项与组件右键菜单的结构一致（无尺寸/布局项）
-  if (b.uitest === 'orgmenu')
-    setTimeout(
-      () =>
-        waitPanel((panel) => {
-          const head = panel.querySelector('.shelves') || panel;
-          const r = head.getBoundingClientRect();
-          head.dispatchEvent(
-            new MouseEvent('contextmenu', { bubbles: true, clientX: r.left + 120, clientY: r.top + 80 })
-          );
-          setTimeout(() => {
-            S.menuLate = { hidden: $('#menu').hidden };
-          }, 5000);
-          setTimeout(() => {
-            const m = $('#menu');
-            S.menuProbe = {
-              hidden: m.hidden,
-              items: [...m.querySelectorAll('button')].map((b) => b.textContent.trim()),
-              rect: (() => {
-                const q = m.getBoundingClientRect();
-                return [Math.round(q.left), Math.round(q.top), Math.round(q.width), Math.round(q.height)];
-              })()
-            };
-            dumpLayout();
-          }, 300);
-        }),
-      400
-    );
-  if (b.uitest === 'group') setTimeout(() => promptInput('新建分组', '例如：设计素材'), 400);
-  // FY_UI=gal：打开组件库；FY_UI=menu：在首张卡片上弹右键菜单
-  // FY_UI=galadd / menusize：再点一下，用来验证「按档位添加」「右键换档」真的生效
-  if (b.uitest === 'gal') setTimeout(() => openGal(), 500);
-  if (b.uitest === 'galadd')
-    setTimeout(() => {
-      openGal();
-      setTimeout(
-        () => document.querySelector('#gallery .gcard[data-kind="weather"][data-size="s"]')?.click(),
-        700
-      );
-    }, 500);
-  // FY_UI=galmat：打开组件库点一下「玻璃」，验证材质真的落到了底层卡片上
-  if (b.uitest === 'galmat')
-    setTimeout(() => {
-      openGal();
-      setTimeout(
-        () => document.querySelector('#gallery .matbtn[data-mat="glass"]')?.click(),
-        800
-      );
-    }, 500);
-  // FY_UI=matall：验证「改材质 = 所有元素一起变」。切暮色后关掉组件库、
-  // 打开关于页，dump 里可同时看到 body / 全部卡片 / 组件库 / 关于页的材质与底色。
-  // cardmats 是 v0.9 用的旧名，保留兼容。
-  if (b.uitest === 'matall' || b.uitest === 'cardmats')
-    setTimeout(() => {
-      openGal();
-      setTimeout(() => {
-        document.querySelector('#gallery .matbtn[data-mat="dusk"]')?.click();
-        setTimeout(() => {
-          S.gallery?.close();
-          openAboutPanel();
-        }, 900);
-      }, 700);
-    }, 500);
-  // FY_UI=floatwin：验证浮层「点遮罩关 / 拖动不误关 / x 也关」。
-  // 结果写进 S.floatProbe，dump 里读；最后重新打开窗口便于截图核对。
-  if (b.uitest === 'floatwin')
-    setTimeout(() => {
-      openAboutPanel();
-      setTimeout(() => {
-        const host = $('#about');
-        const M = (t, o) => new MouseEvent(t, { bubbles: true, button: 0, ...o });
-        // 按下与点击都落在遮罩上 → 应该关闭（否则桌面会被透明板锁死）
-        host.dispatchEvent(M('mousedown', {}));
-        host.dispatchEvent(M('click', {}));
-        const closedByBackdrop = host.hidden;
-        openAboutPanel();
-        setTimeout(() => {
-          const h2 = $('#about');
-          // 从标题栏按下、拖到遮罩上松手：不应关闭
-          h2.querySelector('.ab-head').dispatchEvent(M('mousedown', { clientX: 200, clientY: 200 }));
-          document.dispatchEvent(M('mousemove', { clientX: 300, clientY: 260 }));
-          document.dispatchEvent(M('mouseup', {}));
-          h2.dispatchEvent(M('click', {}));
-          const stayedAfterDrag = !h2.hidden;
-          const moved = h2.querySelector('.ab')?.style.transform || '';
-          h2.querySelector('.ab-close')?.click();
-          const closedByX = h2.hidden;
-          openAboutPanel();
-          S.floatProbe = { closedByBackdrop, stayedAfterDrag, moved, closedByX };
-          setTimeout(() => dumpLayout(), 250);
-        }, 400);
-      }, 700);
-    }, 500);
-  if (b.uitest === 'about') setTimeout(() => openAboutPanel(), 500);
-  // FY_UI=aboutcheck：打开关于并点一次「检查更新」，验证 GitHub 那条链路
-  if (b.uitest === 'aboutcheck')
-    setTimeout(() => {
-      openAboutPanel();
-      setTimeout(() => document.querySelector('#about [data-act="check"]')?.click(), 600);
-    }, 500);
-  if (b.uitest === 'menu') setTimeout(() => openFirstCardMenu(), 500);
-  if (b.uitest === 'menusize')
-    setTimeout(() => {
-      openFirstCardMenu();
-      setTimeout(() => document.querySelector('#menu button')?.click(), 600);
-    }, 500);
-}
-
-/** 调试用：等收纳面板真的渲染出来（要等桌面扫描返回，可能要几秒） */
-function waitPanel(cb, tries = 80) {
-  const panel = $('#organizer');
-  if (panel?.querySelector('.org-head')) return cb(panel);
-  if (tries > 0) setTimeout(() => waitPanel(cb, tries - 1), 150);
-}
-
-/** 调试用：在首张卡片上派发一次右键，等价于用户点右键 */
-function openFirstCardMenu() {
-  const el = document.querySelector('#stage .card');
-  if (!el) return;
-  const r = el.getBoundingClientRect();
-  el.dispatchEvent(
-    new MouseEvent('contextmenu', {
-      bubbles: true,
-      clientX: Math.round(r.left + 46),
-      clientY: Math.round(r.top + 40)
+      // 托盘菜单探针还留在本文件（它要复用闭包里的 trayMenuOpen 等状态），
+      // 落盘能力由 debug.js 回传
+      dumpHook = api?.dump || null;
     })
-  );
+    .catch((e) => console.warn('[fy] 调试探针加载失败', e));
 }
 
 function layoutStage() {
@@ -395,7 +243,19 @@ function buildCard(w) {
 
   let inst = null;
   try {
-    inst = def.mount(body, { id: w.id });
+    inst = def.mount(body, {
+      id: w.id,
+      // 备忘录正文存进 config.json（随配置落盘），不再依赖 WebView 的 localStorage
+      getNote: () => S.cfg.notes?.[w.id] ?? '',
+      setNote: (text) => {
+        if (!S.cfg.notes) S.cfg.notes = {};
+        if (text) S.cfg.notes[w.id] = text;
+        else delete S.cfg.notes[w.id];
+        // 正文单独落盘，不等 320ms 的整份回传：关窗/崩溃也不丢最后几个字。
+        // 命令不可用时退回整份回传。
+        invoke('set_note', { id: w.id, text }).catch(() => save());
+      }
+    });
   } catch (err) {
     console.error('[fy] 组件挂载失败', w.kind, err);
     body.innerHTML = `<div class="k">组件加载失败</div>`;
@@ -439,6 +299,18 @@ function renderWidgets() {
 }
 
 function bindCard(el, w) {
+  // 键盘可达：Tab 能聚焦卡片，Shift+F10 / 菜单键代替右键唤出设置
+  const def = REGISTRY[w.kind] || { name: w.kind };
+  el.tabIndex = 0;
+  el.setAttribute('role', 'group');
+  el.setAttribute('aria-label', `${def.name}组件`);
+  el.addEventListener('keydown', (e) => {
+    if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    openCardMenu(el, w, r.left + 16, r.top + 16);
+  });
+
   el.addEventListener('pointerdown', (e) => {
     if (!S.edit) return;
     if (e.button !== 0) return;
@@ -691,6 +563,8 @@ function removeWidget(id) {
   const w = S.cfg.widgets.find((x) => x.id === id);
   if (!w) return;
   S.cfg.widgets = S.cfg.widgets.filter((x) => x.id !== id);
+  // 组件没了，正文也别一直躺在配置里（后端 normalize 也会再清一次）
+  if (S.cfg.notes) delete S.cfg.notes[id];
   renderWidgets();
   save();
   toast(`已移除「${REGISTRY[w.kind]?.name || w.kind}」`);
@@ -738,7 +612,8 @@ function renderPanel() {
   el.style.setProperty('--shot-x', `${-o.x}px`);
   el.style.setProperty('--shot-y', `${-o.y}px`);
 
-  renderOrganizer(el, S.cfg, S.view, handlers);
+  // 调色板随后端下发；handlers 里没带时 organizer.js 用自己的兜底
+  renderOrganizer(el, S.cfg, S.view, { ...handlers, palette: S.palette });
   attachPanelChrome(el);
   paintShotVars();
   scheduleHit();
@@ -808,7 +683,13 @@ const handlers = {
   addGroup: async () => {
     const name = await promptInput('新建分组', '例如：设计素材');
     if (!name) return;
-    await invoke('create_group', { name });
+    try {
+      await invoke('create_group', { name });
+    } catch (e) {
+      return toast(`新建分组失败：${e?.message || e}`);
+    }
+    // 分组是后端加的，本地副本得跟上，否则下一次 save() 会把它抹掉
+    await syncConfig();
     await refreshDesktop();
   },
   /** 分组自身的右键菜单：改名、调顺序、打开目录、删除 */
@@ -827,6 +708,7 @@ const handlers = {
           if (!name || name === g.name) return;
           try {
             await invoke('rename_group', { id: gid, name });
+            await syncConfig();
             await refreshDesktop();
             toast(`已改名为「${name}」`);
           } catch (err) {
@@ -848,15 +730,25 @@ const handlers = {
       {
         label: '删除分组（内容移回桌面）',
         act: async () => {
-          const n = await invoke('delete_group', { id: gid });
-          await refreshDesktop();
-          toast(n ? `已移出 ${n} 项并删除分组` : '分组已删除');
+          try {
+            const n = await invoke('delete_group', { id: gid });
+            await syncConfig();
+            await refreshDesktop();
+            toast(n ? `已移出 ${n} 项并删除分组` : '分组已删除');
+          } catch (e) {
+            toast(`删除失败：${e?.message || e}`);
+          }
         }
       }
     ]);
   },
   openRoot: () => guardOpen(invoke('open_root')),
   refresh: async () => {
+    // 「刷新」= 前端图标缓存清空 + 后端过期缓存清理 + 重新扫描。
+    // 以前 clearIconCache / clear_cache 都定义了却没有任何调用方，
+    // 换了图标只能重启程序才看得到。
+    clearIconCache();
+    resetLoose();
     await invoke('desktop_icons', { paths: [] }).catch(() => {});
     await refreshDesktop();
   },
@@ -899,8 +791,10 @@ const handlers = {
         { label: '打开', act: () => guardOpen(invoke('open_path', { path })) },
         { label: '打开所在位置', act: () => guardOpen(invoke('reveal_path', { path })) },
         { sep: true },
-        { label: '移出到桌面', act: () => handlers.moveOut([path]) },
-        { sep: true },
+        // 「待整理」里的东西本来就在桌面上，移出没有意义（后端也会拒绝越界移动）
+        ...(group === '__loose'
+          ? []
+          : [{ label: '移出到桌面', act: () => handlers.moveOut([path]) }, { sep: true }]),
         ...groups.slice(0, 6).map((g) => ({
           label: `收进「${g.name}」`,
           act: () => handlers.moveInto([path], g.id)
@@ -914,13 +808,20 @@ const handlers = {
   rerender: () => renderPanel()
 };
 
-function moveGroup(i, delta) {
+/** 分组顺序交给后端改。
+ *  以前是前端交换数组再整份回传：配合 320ms 防抖，很容易和「建/删分组」
+ *  这类后端命令互相覆盖。改成命令式之后顺序只有一个写入方。 */
+async function moveGroup(i, delta) {
   const arr = S.cfg.organizer.groups;
   const j = i + delta;
   if (j < 0 || j >= arr.length) return;
-  [arr[i], arr[j]] = [arr[j], arr[i]];
+  try {
+    await invoke('move_group', { id: arr[i].id, delta });
+  } catch (e) {
+    return toast(`调整顺序失败：${e?.message || e}`);
+  }
+  await syncConfig();
   renderPanel();
-  save();
   toast('分组顺序已调整');
 }
 
@@ -1077,6 +978,9 @@ function sampleTone() {
 /* ============================ 交互基础设施 ============================ */
 
 let hitPending = false;
+let hitTimer = 0;
+/// debug.js 提供的落盘能力（只有 FY_SHOT / FY_UI 时才存在）
+let dumpHook = null;
 
 function scheduleHit() {
   if (hitPending) return;
@@ -1107,11 +1011,33 @@ function updateHit() {
   invoke('set_hit_regions', { rects, force: !!force }).catch(() => {});
 }
 
+/** 写入配置。后端返回它最终采纳的那份（含新的 rev），
+ *  这里只取 rev / 分组 / 天气——这三样是后端命令也会改的，前端副本可能已经落后。 */
 function save() {
   clearTimeout(save._t);
   save._t = setTimeout(() => {
-    invoke('save_config', { config: S.cfg }).catch((e) => console.error('[fy] 保存失败', e));
+    invoke('save_config', { config: S.cfg })
+      .then(adoptConfig)
+      .catch((e) => console.error('[fy] 保存失败', e));
   }, 320);
+}
+
+/** 采纳后端给的配置片段。rev 必须跟上，否则下一次整份回传会被判成过期。 */
+function adoptConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object') return;
+  if (typeof cfg.rev === 'number') S.cfg.rev = cfg.rev;
+  if (cfg.organizer?.groups) S.cfg.organizer.groups = cfg.organizer.groups;
+  if (cfg.weather) S.cfg.weather = cfg.weather;
+}
+
+/** 后端命令改过配置之后重新拉一份：不然前端手里还是旧的，
+ *  下一次防抖回传就会把刚建/改/删的分组和刚换的地区覆盖回去。 */
+async function syncConfig() {
+  try {
+    adoptConfig(await invoke('get_config'));
+  } catch (e) {
+    console.warn('[fy] 拉取配置失败', e);
+  }
 }
 
 function setEdit(on) {
@@ -1147,7 +1073,8 @@ function openAboutPanel() {
     },
     onAutoUpdate: (on) => {
       S.cfg.auto_update = on;
-      save();
+      // set_auto_update 已经在后端改过并落盘，这里同步 rev 即可
+      syncConfig();
       toast(on ? '已开启自动更新检查' : '已关闭自动更新检查');
     }
   });
@@ -1325,6 +1252,8 @@ function pickPlace() {
                   lat: p.lat,
                   lon: p.lon
                 });
+                // 地区是后端写的，拉回来同步 rev，否则下次回传会覆盖成旧地区
+                await syncConfig();
                 toast(`天气地区已改为「${p.name}」`);
               } catch (err) {
                 toast(`设置失败：${err?.message || err}`);
@@ -1523,6 +1452,14 @@ function bindGlobalEvents() {
     document.addEventListener('keydown', trayEsc, true);
     // 等菜单完成布局再量矩形，交给后端做「全局点击」判定
     requestAnimationFrame(syncMenuRect);
+    // 对一次账：注册表里的真实值可能被系统/其它清理工具改过，
+    // 菜单上的勾选必须反映系统现状，而不是配置里的意愿
+    invoke('get_autostart')
+      .then((on) => {
+        S.cfg.autostart = !!on;
+        trayHost.querySelector('[data-act="autostart"]')?.setAttribute('aria-checked', String(!!on));
+      })
+      .catch(() => {});
   }
 
   listen('menu:outside', () => closeTrayMenu());
@@ -1546,7 +1483,7 @@ function bindGlobalEvents() {
         const target = document.elementFromPoint(x, y) || document.body;
         target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }));
         S.trayProbe = { closedByOutside: trayHost.hidden };
-        setTimeout(() => dumpLayout(), 200);
+        setTimeout(() => dumpHook?.(), 200);
       }, 700);
     }, 500);
 
@@ -1585,12 +1522,20 @@ function bindGlobalEvents() {
         break;
       case 'autostart': {
         // 勾选切换不关菜单，和原生勾选菜单的行为一致
+        const want = !S.cfg.autostart;
         try {
-          const after = await invoke('set_autostart', { on: !S.cfg.autostart });
+          const after = await invoke('set_autostart', { on: want });
           S.cfg.autostart = !!after;
           btn.setAttribute('aria-checked', String(!!after));
-          save();
-        } catch {}
+          syncConfig();
+        } catch (e) {
+          // 写注册表失败：把勾选态回滚到真实值，并明确提示。
+          // 以前这里 catch {} 静默吞掉，界面显示「已开」但系统里其实没有。
+          const real = await invoke('get_autostart').catch(() => !!S.cfg.autostart);
+          S.cfg.autostart = !!real;
+          btn.setAttribute('aria-checked', String(!!real));
+          toast(`开机自启设置失败：${e?.message || e}`);
+        }
         break;
       }
       case 'seconds': {
@@ -1642,8 +1587,15 @@ function bindGlobalEvents() {
     await handlers.moveInto(paths, gid);
   });
 
-  // 每 500ms 兜一次热区，防止某些布局变化没触发上报
-  setInterval(updateHit, 500);
+  // 每 500ms 兜一次热区，防止某些布局变化没触发上报。
+  // 句柄留着给 pagehide 清掉，否则页面重建后会有两条定时器一起跑。
+  hitTimer = setInterval(updateHit, 500);
+
+  // 页面被 WebView2 回收/重载前统一退订，避免同一事件被处理两次
+  window.addEventListener('pagehide', () => {
+    unlistenAll();
+    clearInterval(hitTimer);
+  });
 
   loadWeatherOnce();
 }
@@ -1662,138 +1614,6 @@ function applyWeather(w) {
   S.counters.weather = (S.counters.weather || 0) + 1;
   S.weather = w;
   for (const m of S.mounted.values()) m.inst?.weather?.(w);
-}
-
-function dumpLayout() {
-  const json = JSON.stringify(
-    {
-      inner: [innerWidth, innerHeight],
-      dpr: dpr(),
-      scale: S.scale,
-      design: S.design,
-      widgets: [...document.querySelectorAll('#stage .card')].map((el) => {
-        const r = el.getBoundingClientRect();
-        const cs = getComputedStyle(el);
-        return [el.dataset.kind, el.dataset.size, el.dataset.material || '',
-          Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height),
-          cs.backgroundColor, cs.color];
-      }),
-      organizer: (() => {
-        const r = $('#organizer').getBoundingClientRect();
-        return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
-      })(),
-      // 收纳格子：必须是正方形、每排最多 7 个。这些数只能量出来，看不准
-      org: (() => {
-        const el = $('#organizer');
-        const grid = el.querySelector('.shelf:not(.folded) .cells');
-        const kids = grid ? [...grid.children] : [];
-        const top = kids[0]?.offsetTop;
-        const first = kids[0]?.getBoundingClientRect();
-        return {
-          w: Math.round(el.getBoundingClientRect().width),
-          cols: kids.filter((k) => k.offsetTop === top).length,
-          cell: first ? [Math.round(first.width), Math.round(first.height)] : null,
-          shelves: el.querySelectorAll('.shelf').length,
-          foldedShelves: el.querySelectorAll('.shelf.folded').length,
-          foldedCfg: (S.cfg.organizer.folded || []).length
-        };
-      })(),
-      foldProbe: S.foldProbe || null,
-      menuProbe: S.menuProbe || null,
-      menuLate: S.menuLate || null,
-      glass: document.body.dataset.glass === '1',
-      // 材质的三个来源必须一致：DOM 属性（CSS 用）、内存配置、磁盘配置
-      mat: {
-        attr: document.body.dataset.material,
-        cfg: S.cfg.material,
-        tone: document.body.dataset.tone || '',
-        shot: !!S.shot,
-        glassErr: S.glassErr || '',
-        fill: (() => {
-          const s = document.querySelector('#stage .surface');
-          return s ? getComputedStyle(s).backgroundColor : '';
-        })()
-      },
-      // 日历卡与时钟卡在最小尺寸下的内部盒子：核对内容是「刚好塞下」还是「溢出被裁」
-      probe: (() => {
-        const out = {};
-        for (const kind of ['calendar', 'clock']) {
-          const card = document.querySelector(`#stage .card[data-kind="${kind}"]`);
-          if (!card) continue;
-          const body = card.querySelector('.body');
-          const box = (sel) => {
-            const el = card.querySelector(sel);
-            if (!el) return null;
-            const r = el.getBoundingClientRect();
-            return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
-          };
-          out[kind] = {
-            body: box('.body'),
-            bodyScroll: [body?.clientWidth, body?.clientHeight, body?.scrollWidth, body?.scrollHeight],
-            grid: box('.cd-grid'),
-            week: box('.cd-week'),
-            side: box('.ck-side'),
-            dial: box('.ck-dial')
-          };
-        }
-        return out;
-      })(),
-      net: (() => {
-        const card = document.querySelector('#stage .card[data-kind="network"]');
-        if (!card) return null;
-        const box = (sel) => {
-          const el = card.querySelector(sel);
-          if (!el) return null;
-          const r = el.getBoundingClientRect();
-          return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
-        };
-        return {
-          top: box('.net-top'),
-          mid: box('.net-mid'),
-          main: box('.net-main'),
-          num: box('.net-num b'),
-          spark: box('.net-spark'),
-          foot: box('.net-foot'),
-          text: card.querySelector('.down')?.textContent,
-          bodyH: card.querySelector('.body')?.clientHeight
-        };
-      })(),
-      counters: S.counters || {},
-      // 弹层调试：菜单到底有没有渲染出来（FY_UI=menu 时靠这个判断）
-      menu: {
-        hidden: $('#menu')?.hidden,
-        items: $('#menu')?.querySelectorAll('button').length || 0,
-        text: $('#menu')?.innerText?.slice(0, 200) || ''
-      },
-      // 浮层调试：窗口是否还在、拖到哪了、配色是否跟着全局材质
-      floats: {
-        body: document.body.dataset.material,
-        gallery: {
-          hidden: $('#gallery')?.hidden,
-          mat: $('#gallery .gal')?.dataset.mat || '',
-          transform: $('#gallery .gal')?.style.transform || '',
-          bg: $('#gallery .gal') ? getComputedStyle($('#gallery .gal')).backgroundColor : ''
-        },
-        about: {
-          hidden: $('#about')?.hidden,
-          transform: $('#about .ab')?.style.transform || '',
-          bg: $('#about .ab') ? getComputedStyle($('#about .ab')).backgroundColor : ''
-        },
-        modal: {
-          count: document.querySelectorAll('.modal').length,
-          transform: document.querySelector('.modal-card')?.style.transform || '',
-          bg: document.querySelector('.modal-card') ? getComputedStyle(document.querySelector('.modal-card')).backgroundColor : ''
-        }
-      },
-      probe: { float: S.floatProbe || null, mat: S.matProbe || null, tray: S.trayProbe || null },
-      err: S.err || '',
-      bridge: dbg,
-      shot: !!S.shot
-    },
-    null,
-    1
-  );
-  invoke('dev_dump', { json }).catch(() => {});
 }
 
 boot().catch((e) => {

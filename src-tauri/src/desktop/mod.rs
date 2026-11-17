@@ -89,6 +89,64 @@ pub fn root_dir(cfg: &Config) -> PathBuf {
     }
 }
 
+/* --------------------------- 路径归属校验 --------------------------- */
+//
+// IPC 调用方目前只有我们自己的前端，但「信任前端传来的路径」这件事本身没有约束：
+// 渲染层一旦被注入，就能把任意目录/文件搬进收纳夹或搬到桌面。这里给每条移动
+// 命令加一道归属校验，越界直接拒绝。
+
+/// 词法规范化：去掉 `.`、把 `..` 回退一级。不访问文件系统，
+/// 所以对不存在的路径也成立（`canonicalize` 会失败）。
+pub fn normalize_path(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn path_key(p: &Path) -> String {
+    p.to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+/// `path` 是否落在 `dir` 之内（含 `dir` 本身）。
+/// Windows 下大小写不敏感、`/` 与 `\` 混用，所以要统一成小写 + 反斜杠再比前缀。
+pub fn is_within(path: &Path, dir: &Path) -> bool {
+    let (p, d) = (path_key(&normalize_path(path)), path_key(&normalize_path(dir)));
+    p == d || p.starts_with(&format!("{d}\\"))
+}
+
+/// 允许被「移入收纳」的源：任意桌面目录，或收纳根目录内部的现有条目（组间调整）。
+pub fn ensure_movable_in(cfg: &Config, p: &Path) -> Result<(), String> {
+    let root = root_dir(cfg);
+    let ok = is_within(p, &root) || desktop_dirs().iter().any(|d| is_within(p, d));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("拒绝移动桌面/收纳目录以外的条目：{}", p.display()))
+    }
+}
+
+/// 允许被「移出到桌面」的源：必须已经在收纳根目录里。
+pub fn ensure_in_root(cfg: &Config, p: &Path) -> Result<(), String> {
+    let root = root_dir(cfg);
+    if is_within(p, &root) {
+        Ok(())
+    } else {
+        Err(format!("只允许把收纳目录内的条目移回桌面：{}", p.display()))
+    }
+}
+
 pub fn sanitize(name: &str) -> String {
     let bad = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
     let s: String = name
@@ -291,6 +349,7 @@ pub fn move_into(cfg: &Config, paths: &[String], group_id: &str) -> Result<usize
         if !src.exists() {
             continue;
         }
+        ensure_movable_in(cfg, &src)?;
         move_one(&src, &dir)?;
         n += 1;
     }
@@ -298,7 +357,7 @@ pub fn move_into(cfg: &Config, paths: &[String], group_id: &str) -> Result<usize
 }
 
 /// 移回桌面——「收纳」必须随时能反悔。
-pub fn move_out(paths: &[String]) -> Result<usize, String> {
+pub fn move_out(cfg: &Config, paths: &[String]) -> Result<usize, String> {
     let desktop = primary_desktop();
     let mut n = 0;
     for p in paths {
@@ -306,6 +365,7 @@ pub fn move_out(paths: &[String]) -> Result<usize, String> {
         if !src.exists() {
             continue;
         }
+        ensure_in_root(cfg, &src)?;
         move_one(&src, &desktop)?;
         n += 1;
     }
@@ -616,4 +676,52 @@ pub fn reveal_path(path: &str) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     Err("仅支持 Windows".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_path_resolves_dotdot() {
+        assert_eq!(
+            path_key(&normalize_path(Path::new(r"C:\Users\a\..\b\.\c"))),
+            r"c:\users\b\c"
+        );
+    }
+
+    #[test]
+    fn is_within_is_case_and_separator_insensitive() {
+        let root = Path::new(r"C:\Users\Bob\Desktop\fy-desktop");
+        assert!(is_within(root, root), "根目录本身算在内部");
+        assert!(is_within(
+            Path::new(r"c:/users/bob/desktop/fy-desktop/dev/a.lnk"),
+            root
+        ));
+        assert!(
+            !is_within(Path::new(r"C:\Users\Bob\Desktop\fy-desktop2\a"), root),
+            "同名前缀的兄弟目录不能算命中"
+        );
+        assert!(!is_within(Path::new(r"C:\Windows\system32\cmd.exe"), root));
+    }
+
+    #[test]
+    fn normalize_path_does_not_escape_on_dotdot() {
+        let p = normalize_path(Path::new(r"C:\Users\Bob\..\..\Windows\a.txt"));
+        assert_eq!(path_key(&p), r"c:\windows\a.txt");
+    }
+
+    #[test]
+    fn unique_target_never_overwrites() {
+        let dir = std::env::temp_dir().join("fy-desktop-uniq-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), b"1").unwrap();
+        let second = unique_target(&dir, "a.txt");
+        assert_eq!(second.file_name().unwrap().to_string_lossy(), "a (2).txt");
+        std::fs::write(&second, b"2").unwrap();
+        let third = unique_target(&dir, "a.txt");
+        assert_eq!(third.file_name().unwrap().to_string_lossy(), "a (3).txt");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

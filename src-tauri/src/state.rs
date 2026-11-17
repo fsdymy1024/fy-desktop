@@ -1,7 +1,22 @@
 //! 进程内共享状态。
 
 use crate::config::Config;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
+
+/// 统一取锁。
+///
+/// 以前各处都写 `lock().unwrap_or_else(|p| p.into_inner())`：锁中毒（持锁线程 panic）
+/// 时静默拿到可能写坏一半的状态继续跑，问题被藏起来。这里至少留一条日志，
+/// 让「配置自己变回去了」这类怪事有迹可循。
+pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    match m.lock() {
+        Ok(g) => g,
+        Err(p) => {
+            eprintln!("[state] 锁中毒：持锁线程 panic 过，按内部值继续（如遇异常请重启）");
+            p.into_inner()
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct HitState {
@@ -42,16 +57,25 @@ impl AppState {
     }
 
     pub fn config(&self) -> Config {
-        self.cfg
-            .lock()
-            .map(|c| c.clone())
-            .unwrap_or_else(|p| p.into_inner().clone())
+        lock(&self.cfg).clone()
     }
 
+    /// 改配置并立刻落盘。每次写入都把 `rev` 推一格，前端据此判断自己的副本是否过期。
     pub fn with_config<R>(&self, f: impl FnOnce(&mut Config) -> R) -> R {
-        let mut guard = self.cfg.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = lock(&self.cfg);
         let r = f(&mut guard);
+        guard.rev = guard.rev.wrapping_add(1);
         crate::config::save(&guard);
         r
+    }
+
+    /// 直接替换整份配置（已校验过的），同样推进 `rev`。
+    pub fn replace_config(&self, mut next: Config) -> Config {
+        let mut guard = lock(&self.cfg);
+        next.rev = guard.rev.wrapping_add(1);
+        guard.rev = next.rev;
+        *guard = next.clone();
+        crate::config::save(&guard);
+        next
     }
 }

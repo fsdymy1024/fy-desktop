@@ -1,6 +1,7 @@
 //! 暴露给前端的命令。命名统一 `域:动作`。
 
 use crate::config::Config;
+use crate::consts::MATERIALS;
 use crate::desktop::{self, glass, icons, DesktopView};
 use crate::state::AppState;
 use crate::weather::{self, Weather};
@@ -15,6 +16,9 @@ pub struct Boot {
     pub version: String,
     pub root: String,
     pub autostart: bool,
+    /// 分组配色由后端下发。以前前端 organizer.js 和 commands.rs 各写一份，
+    /// 加一个颜色就得改两处，迟早漂移。
+    pub palette: Vec<String>,
     /// 本次是否自检截图模式（截图时要等数据齐了再拍）
     pub shot: bool,
     /// 调试：启动后自动打开某个弹层（FY_UI=place|group），配合截图核对用
@@ -24,8 +28,8 @@ pub struct Boot {
 #[tauri::command]
 pub fn boot(state: State<'_, AppState>) -> Boot {
     let cfg = state.config();
-    let design = *state.design.lock().unwrap_or_else(|p| p.into_inner());
-    let scale = *state.scale.lock().unwrap_or_else(|p| p.into_inner());
+    let design = *crate::state::lock(&state.design);
+    let scale = *crate::state::lock(&state.scale);
 
     let autostart = crate::autostart::is_enabled();
 
@@ -36,6 +40,7 @@ pub fn boot(state: State<'_, AppState>) -> Boot {
         scale,
         version: env!("CARGO_PKG_VERSION").into(),
         autostart,
+        palette: crate::consts::GROUP_COLORS.iter().map(|c| c.to_string()).collect(),
         shot: std::env::var("FY_SHOT").is_ok(),
         uitest: std::env::var("FY_UI").unwrap_or_default(),
     }
@@ -71,9 +76,35 @@ pub fn ui_ready(app: AppHandle, nav: Option<String>, boots: Option<u32>) {
     }
 }
 
+/// 前端整份回传配置。返回值是「后端最终采纳的那份」，前端拿它刷新自己的 `rev`。
+///
+/// 两条写路径（前端整份回传 / 后端命令增量改）同时存在时，靠 `rev` 判断新鲜度：
+/// 版本对不上说明中间有命令改过配置，这时分组与天气以后端为准——否则一次防抖
+/// 回传就会把「刚建好的分组」「刚改完的地区」抹掉。
 #[tauri::command]
-pub fn save_config(state: State<'_, AppState>, config: Config) {
-    state.with_config(|c| *c = config);
+pub fn save_config(state: State<'_, AppState>, mut config: Config) -> Config {
+    let design = *crate::state::lock(&state.design);
+    crate::config::normalize(&mut config, design.0, design.1);
+
+    let stale = {
+        let cur = crate::state::lock(&state.cfg);
+        if config.rev != cur.rev {
+            config.organizer.groups = cur.organizer.groups.clone();
+            config.weather = cur.weather.clone();
+            true
+        } else {
+            false
+        }
+    };
+    if stale {
+        eprintln!("[config] 回传的 rev 过期（{}），保留后端的分组与天气", config.rev);
+    }
+    state.replace_config(config)
+}
+
+#[tauri::command]
+pub fn get_config(state: State<'_, AppState>) -> Config {
+    state.config()
 }
 
 #[tauri::command]
@@ -81,10 +112,15 @@ pub fn desktop_view(state: State<'_, AppState>) -> DesktopView {
     desktop::view(&state.config())
 }
 
-/// 图标提取会走 COM，一次几十个要几百毫秒，放 blocking 线程池里跑
+/// 图标提取会走 COM，一次几十个要几百毫秒，放 blocking 线程池里跑。
+/// 传空列表 = 「刷新」链路的一次空转：顺手清一遍过期缓存，把「只增不减」补上。
 #[tauri::command]
 pub async fn desktop_icons(paths: Vec<String>) -> Vec<(String, String)> {
     tauri::async_runtime::spawn_blocking(move || {
+        if paths.is_empty() {
+            icons::prune_cache();
+            return Vec::new();
+        }
         paths
             .into_iter()
             .filter_map(|p| icons::data_url(&p).map(|url| (p, url)))
@@ -94,13 +130,31 @@ pub async fn desktop_icons(paths: Vec<String>) -> Vec<(String, String)> {
     .unwrap_or_default()
 }
 
+/// 打开类命令的审计：路径是否落在「桌面 / 收纳根 / 配置目录」之内。
+///
+/// 这些命令仍然放行任意路径（用户可能就是想打开某个目录），但越界会留一行
+/// 日志——真被注入时至少能在 launch.log 里看到痕迹。
+fn audit_path(state: &AppState, kind: &str, path: &str) {
+    let cfg = state.config();
+    let p = std::path::Path::new(path);
+    let allowed = desktop::is_within(p, &desktop::root_dir(&cfg))
+        || desktop::desktop_dirs().iter().any(|d| desktop::is_within(p, d))
+        || desktop::is_within(p, &crate::config::config_path())
+        || desktop::is_within(p, &std::env::temp_dir());
+    if !allowed {
+        desktop::log_launch(&format!("[audit] {kind} 越界路径：{path}"));
+    }
+}
+
 #[tauri::command]
-pub fn open_path(path: String) -> Result<(), String> {
+pub fn open_path(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    audit_path(&state, "open", &path);
     desktop::open_path(&path)
 }
 
 #[tauri::command]
-pub fn reveal_path(path: String) -> Result<(), String> {
+pub fn reveal_path(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    audit_path(&state, "reveal", &path);
     desktop::reveal_path(&path)
 }
 
@@ -137,8 +191,12 @@ pub fn move_into(
 }
 
 #[tauri::command]
-pub fn move_out(app: AppHandle, paths: Vec<String>) -> Result<usize, String> {
-    let n = desktop::move_out(&paths)?;
+pub fn move_out(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<usize, String> {
+    let n = desktop::move_out(&state.config(), &paths)?;
     refresh(&app);
     Ok(n)
 }
@@ -188,6 +246,15 @@ pub fn create_group(app: AppHandle, state: State<'_, AppState>, name: String) ->
         return Err("分组名不能为空".into());
     }
     let cfg = state.config();
+    // 分组名就是磁盘上的目录名，重名会让两个分组写进同一个文件夹
+    if cfg
+        .organizer
+        .groups
+        .iter()
+        .any(|g| g.name.eq_ignore_ascii_case(&name))
+    {
+        return Err(format!("已经有叫「{name}」的分组了"));
+    }
     let id = format!("g{}", now_ms());
     let color = pick_color(cfg.organizer.groups.len());
     let group = crate::config::GroupCfg {
@@ -214,6 +281,14 @@ pub fn rename_group(
         return Err("分组名不能为空".into());
     }
     let cfg = state.config();
+    if cfg
+        .organizer
+        .groups
+        .iter()
+        .any(|g| g.id != id && g.name.eq_ignore_ascii_case(&name))
+    {
+        return Err(format!("已经有叫「{name}」的分组了"));
+    }
     let root = desktop::root_dir(&cfg);
     let old = cfg
         .organizer
@@ -240,6 +315,31 @@ pub fn rename_group(
     Ok(())
 }
 
+/// 调整分组顺序。前端以前只在内存里交换数组再整份回传，配合防抖很容易和
+/// 后端命令打架；改成命令式之后顺序由后端持有。
+#[tauri::command]
+pub fn move_group(app: AppHandle, state: State<'_, AppState>, id: String, delta: i32) -> Result<(), String> {
+    let mut order_err = None;
+    state.with_config(|c| {
+        let arr = &mut c.organizer.groups;
+        let Some(i) = arr.iter().position(|g| g.id == id) else {
+            order_err = Some("分组不存在".to_string());
+            return;
+        };
+        let j = i as i32 + delta;
+        if j < 0 || j as usize >= arr.len() {
+            order_err = Some("已经到头了".to_string());
+            return;
+        }
+        arr.swap(i, j as usize);
+    });
+    if let Some(e) = order_err {
+        return Err(e);
+    }
+    refresh(&app);
+    Ok(())
+}
+
 /// 删分组：格子里的东西先搬回桌面，绝不静默删文件。
 #[tauri::command]
 pub fn delete_group(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<usize, String> {
@@ -256,12 +356,30 @@ pub fn delete_group(app: AppHandle, state: State<'_, AppState>, id: String) -> R
             .flatten()
             .map(|e| e.path().to_string_lossy().to_string())
             .collect::<Vec<_>>();
-        moved = desktop::move_out(&items)?;
+        moved = desktop::move_out(&cfg, &items)?;
         let _ = std::fs::remove_dir(&dir); // 空目录才删得掉，非空说明还有残留，留着更安全
     }
     state.with_config(|c| c.organizer.groups.retain(|g| g.id != id));
     refresh(&app);
     Ok(moved)
+}
+
+/// 备忘录正文写进配置（跟着 config.json 落盘）。
+/// 以前在 localStorage 里：组件删了条目还留着、WebView2 清缓存就丢。
+#[tauri::command]
+pub fn set_note(state: State<'_, AppState>, id: String, text: String) {
+    if id.trim().is_empty() {
+        return;
+    }
+    // 正文只有前端会写，这里不推进 `rev`：否则用户每打几个字就发一次命令，
+    // 每次都会把前端手里的版本号顶掉，后面的整份回传全被判成「过期」。
+    let mut c = crate::state::lock(&state.cfg);
+    if text.is_empty() {
+        c.notes.remove(&id);
+    } else {
+        c.notes.insert(id, text);
+    }
+    crate::config::save(&c);
 }
 
 #[tauri::command]
@@ -274,11 +392,10 @@ pub fn set_hit_regions(state: State<'_, AppState>, rects: Vec<[f64; 4]>, force: 
 #[tauri::command]
 pub fn set_menu_rect(state: State<'_, AppState>, rect: Option<[f64; 4]>) {
     eprintln!("[menu] rect={rect:?}");
-    if let Ok(mut h) = state.hit.lock() {
-        h.menu = rect;
-        h.menu_armed = false;
-        h.last_down = false;
-    }
+    let mut h = crate::state::lock(&state.hit);
+    h.menu = rect;
+    h.menu_armed = false;
+    h.last_down = false;
 }
 
 /// 抓一张不含本窗口的桌面底图，给前端做毛玻璃背景
@@ -297,10 +414,28 @@ pub fn glass_snapshot(app: AppHandle) -> Result<String, String> {
     }
 }
 
+/// 改开机自启。注册表是唯一事实来源，改完把真实值写回配置：
+/// 下次启动 `lib.rs` 会按 `cfg.autostart` 同步注册表，配置落后就会把用户的手动
+/// 改动覆盖回去（比如用任务管理器禁用过启动项）。
 #[tauri::command]
-pub fn set_autostart(on: bool) -> Result<bool, String> {
+pub fn set_autostart(state: State<'_, AppState>, on: bool) -> Result<bool, String> {
     crate::autostart::set(on)?;
-    Ok(crate::autostart::is_enabled())
+    let real = crate::autostart::is_enabled();
+    if state.config().autostart != real {
+        state.with_config(|c| c.autostart = real);
+    }
+    Ok(real)
+}
+
+/// 读系统的真实自启状态。托盘菜单打开时对一次账，
+/// 免得「注册表里其实已经关了，菜单上还打着勾」。
+#[tauri::command]
+pub fn get_autostart(state: State<'_, AppState>) -> bool {
+    let real = crate::autostart::is_enabled();
+    if state.config().autostart != real {
+        state.with_config(|c| c.autostart = real);
+    }
+    real
 }
 
 #[tauri::command]
@@ -358,11 +493,17 @@ pub fn weather_refresh(app: AppHandle, state: State<'_, AppState>) {
 
 #[tauri::command]
 pub fn set_material(state: State<'_, AppState>, material: String) {
+    if !MATERIALS.contains(&material.as_str()) {
+        eprintln!("[config] 忽略非法材质：{material}");
+        return;
+    }
     state.with_config(|c| c.material = material);
 }
 
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
+    // 先通知后台线程收工、放掉单实例互斥体，再退出
+    crate::begin_shutdown();
     app.exit(0);
 }
 
@@ -372,7 +513,8 @@ use crate::update::{self, Update};
 
 #[tauri::command]
 pub async fn check_update() -> Update {
-    update::check().await
+    // 手动检查有 30s 冷却：连点几下不该连着打 GitHub
+    update::check_throttled(update::MANUAL_COOLDOWN).await
 }
 
 /// 下载安装包。返回本地路径，前端拿到之后再问用户要不要现在装。
@@ -419,10 +561,8 @@ fn refresh(app: &AppHandle) {
 }
 
 fn pick_color(i: usize) -> String {
-    const C: [&str; 6] = [
-        "#3d8bf0", "#b16ce0", "#2fa27c", "#e2712c", "#8d9aa6", "#d94f70",
-    ];
-    C[i % C.len()].to_string()
+    let c = crate::consts::GROUP_COLORS;
+    c[i % c.len()].to_string()
 }
 
 fn now_ms() -> u128 {

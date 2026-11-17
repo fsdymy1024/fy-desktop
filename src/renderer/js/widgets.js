@@ -457,14 +457,33 @@ export const REGISTRY = {
     preview: () => `<b>…</b><span>随手记</span>`,
     mount(body, ctx) {
       body.innerHTML = `<div class="nt-head">备忘录</div>
-        <textarea class="nt-area" placeholder="写点什么…" spellcheck="false"></textarea>`;
+        <textarea class="nt-area" placeholder="写点什么…" spellcheck="false"
+          aria-label="备忘录正文"></textarea>`;
       const area = body.querySelector('.nt-area');
-      const key = `fy.note.${ctx.id}`;
-      area.value = localStorage.getItem(key) || '';
+      // 正文改为存进 config.json（ctx.getNote / setNote）。旧版本存在 localStorage 的
+      // `fy.note.<id>` 里：升级后第一次读出来做一次迁移，然后把旧键删掉，避免残留。
+      const legacyKey = ctx?.id ? `fy.note.${ctx.id}` : '';
+      let legacy = '';
+      try {
+        legacy = (legacyKey && localStorage.getItem(legacyKey)) || '';
+      } catch (_) {
+        // localStorage 被禁：直接走配置
+      }
+      const saved = ctx?.getNote?.() || '';
+      area.value = saved || legacy;
+      if (legacy && !saved) ctx?.setNote?.(legacy);
+      if (legacy) {
+        try {
+          localStorage.removeItem(legacyKey);
+        } catch (_) {
+          // 删不掉也无所谓，已经迁到配置里了
+        }
+      }
+
       let timer = 0;
       area.addEventListener('input', () => {
         clearTimeout(timer);
-        timer = setTimeout(() => localStorage.setItem(key, area.value), 300);
+        timer = setTimeout(() => ctx?.setNote?.(area.value), 300);
       });
       return { destroy: () => clearTimeout(timer) };
     }

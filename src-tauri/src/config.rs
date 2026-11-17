@@ -5,6 +5,7 @@
 //! 免得老用户升级后桌面收纳全空。
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const CONFIG_VERSION: u32 = 4;
@@ -104,6 +105,13 @@ pub struct WeatherCfg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub version: u32,
+    /// 配置版本号（乐观锁）。
+    ///
+    /// 前端是「整份配置 + 320ms 防抖」回传的，而后端命令（建分组、换地区、
+    /// 改材质）也会直接改配置。两边同时写就会出现「整份回传把后端刚做的改动抹掉」。
+    /// 每次后端落盘都 +1，前端回传时带上自己拿到的值，不一致就说明中间有人改过。
+    #[serde(default)]
+    pub rev: u64,
     /// 界面缩放。0 = 按屏幕宽度自动
     #[serde(default)]
     pub scale: f64,
@@ -128,6 +136,12 @@ pub struct Config {
     /// 启动后自动去 GitHub 看一眼有没有新版本（只提示，不自动替换）
     #[serde(default = "d_true")]
     pub auto_update: bool,
+    /// 备忘录内容，键是组件 id。
+    ///
+    /// 以前存在 WebView 的 localStorage 里：组件被移除后条目残留、WebView2 清理
+    /// 缓存时正文直接丢，而其它状态都在 config.json 里——两套持久化策略不一致。
+    #[serde(default)]
+    pub notes: BTreeMap<String, String>,
 }
 
 fn d_material() -> String {
@@ -173,6 +187,7 @@ impl Config {
 
         Self {
             version: CONFIG_VERSION,
+            rev: 1,
             scale: 0.0,
             material: d_material(),
             widgets: vec![
@@ -198,6 +213,7 @@ impl Config {
             show_labels: true,
             show_seconds: true,
             auto_update: true,
+            notes: BTreeMap::new(),
         }
     }
 }
@@ -298,5 +314,210 @@ pub fn save(cfg: &Config) {
         if std::fs::write(&tmp, text).is_ok() {
             let _ = std::fs::rename(&tmp, dir.join("config.json"));
         }
+    }
+}
+
+/* ------------------------- 配置校验与归一化 ------------------------- */
+
+fn clamp_num(v: f64, lo: f64, hi: f64, fallback: f64) -> f64 {
+    if !v.is_finite() {
+        return fallback;
+    }
+    v.clamp(lo, hi)
+}
+
+fn is_hex_color(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 7 && b[0] == b'#' && b[1..].iter().all(|c| c.is_ascii_hexdigit())
+}
+
+/// 收纳根目录允许任意盘符的绝对路径，但不接受相对路径和 `..`：
+/// 前者取决于进程 cwd（开机自启时是 system32），后者会跳出预期目录。
+fn is_safe_root(p: &str) -> bool {
+    let t = p.trim();
+    if t.is_empty() {
+        return true;
+    }
+    let path = std::path::Path::new(t);
+    path.is_absolute()
+        && !path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+/// 分组名会变成磁盘上的目录名，先洗一遍并去掉重名：
+/// 两个分组同名就会写到同一个文件夹，之后改名/删除会互相打架。
+fn normalize_groups(groups: &mut Vec<GroupCfg>) {
+    let bad = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+    let mut seen_ids: Vec<String> = Vec::new();
+    let mut seen_names: Vec<String> = Vec::new();
+    groups.retain_mut(|g| {
+        let name: String = g
+            .name
+            .chars()
+            .map(|c| if bad.contains(&c) { '_' } else { c })
+            .collect();
+        let name = name.trim().trim_end_matches('.').to_string();
+        if name.is_empty() {
+            return false;
+        }
+        let id = g.id.trim().to_string();
+        if id.is_empty() || seen_ids.iter().any(|x| x.eq_ignore_ascii_case(&id)) {
+            return false;
+        }
+        let lower = name.to_lowercase();
+        if seen_names.iter().any(|x| x.eq_ignore_ascii_case(&lower)) {
+            return false;
+        }
+        seen_ids.push(id.clone());
+        seen_names.push(lower);
+        g.id = id;
+        g.name = name;
+        if !is_hex_color(&g.color) {
+            let i = seen_ids.len() - 1;
+            g.color = crate::consts::GROUP_COLORS[i % crate::consts::GROUP_COLORS.len()].to_string();
+        }
+        true
+    });
+}
+
+/// 把前端回传的整份配置按「不信任」处理：越界坐标夹回屏幕、非法枚举回退默认、
+/// 多余的字段丢掉。宁可丢一个字段，也不要一个坏值反复落盘。
+pub fn normalize(cfg: &mut Config, design_w: f64, design_h: f64) {
+    let dw = if design_w.is_finite() && design_w > 0.0 { design_w } else { 1920.0 };
+    let dh = if design_h.is_finite() && design_h > 0.0 { design_h } else { 1080.0 };
+
+    cfg.version = CONFIG_VERSION;
+    cfg.scale = if cfg.scale == 0.0 {
+        0.0
+    } else {
+        clamp_num(cfg.scale, 1.0, 2.0, 1.0)
+    };
+    if !crate::consts::MATERIALS.contains(&cfg.material.as_str()) {
+        cfg.material = d_material();
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    cfg.widgets
+        .retain(|w| !w.id.trim().is_empty() && !w.kind.trim().is_empty() && seen.insert(w.id.clone()));
+    for w in cfg.widgets.iter_mut() {
+        let allowed = sizes_for(&w.kind);
+        if !allowed.contains(&w.size.as_str()) {
+            w.size = default_size(&w.kind).to_string();
+        }
+        let (cw, ch) = dims(&w.size);
+        w.w = cw;
+        w.h = ch;
+        w.x = clamp_num(w.x, 0.0, (dw - cw).max(0.0), 0.0).round();
+        w.y = clamp_num(w.y, 0.0, (dh - ch).max(0.0), 0.0).round();
+        if !w.material.is_empty() && !crate::consts::MATERIALS.contains(&w.material.as_str()) {
+            w.material = String::new();
+        }
+    }
+
+    normalize_groups(&mut cfg.organizer.groups);
+    {
+        let ids: Vec<String> = cfg.organizer.groups.iter().map(|g| g.id.clone()).collect();
+        cfg.organizer
+            .folded
+            .retain(|id| ids.iter().any(|x| x == id));
+    }
+
+    let o = &mut cfg.organizer;
+    o.w = clamp_num(o.w, 320.0, dw.max(320.0), org_width_for(dw)).round();
+    o.h = if o.h > 0.0 {
+        clamp_num(o.h, 260.0, dh.max(260.0), 0.0).round()
+    } else {
+        0.0
+    };
+    o.x = clamp_num(o.x, 0.0, (dw - o.w).max(0.0), 0.0).round();
+    let oh = if o.h > 0.0 { o.h.min(dh) } else { dh * 0.5 };
+    o.y = clamp_num(o.y, 0.0, (dh - oh).max(0.0), 0.0).round();
+    // 收纳根：去掉首尾空白 → 不接受相对路径/`..` → 已存在但不是目录（盘符被拔掉、
+    // 或被改成同名文件）就退回默认桌面，避免每次启动都对着一个死路径建目录失败
+    let root = o.root.trim().to_string();
+    o.root = if root.is_empty() || !is_safe_root(&root) {
+        String::new()
+    } else {
+        let p = std::path::Path::new(&root);
+        if p.exists() && !p.is_dir() {
+            String::new()
+        } else {
+            root
+        }
+    };
+
+    if !(-90.0..=90.0).contains(&cfg.weather.lat) || !(-180.0..=180.0).contains(&cfg.weather.lon) {
+        cfg.weather = d_weather();
+    }
+
+    // 备忘录键跟着组件走：组件删了正文也不该一直躺在配置里
+    let ids: Vec<String> = cfg.widgets.iter().map(|w| w.id.clone()).collect();
+    cfg.notes.retain(|id, _| ids.iter().any(|x| x == id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> Config {
+        Config::default_for(1920.0, 1080.0)
+    }
+
+    #[test]
+    fn normalize_clamps_widgets_into_screen() {
+        let mut c = sample();
+        c.widgets[0].x = 99_999.0;
+        c.widgets[0].y = -50.0;
+        c.widgets[0].size = "huge".into();
+        normalize(&mut c, 1920.0, 1080.0);
+        let w = &c.widgets[0];
+        assert!(sizes_for(&w.kind).contains(&w.size.as_str()));
+        assert!(w.x >= 0.0 && w.x + w.w <= 1920.0);
+        assert!(w.y >= 0.0);
+        assert_eq!((w.w, w.h), dims(&w.size));
+    }
+
+    #[test]
+    fn normalize_rejects_bad_root_and_material() {
+        let mut c = sample();
+        c.organizer.root = r"..\..\Windows".into();
+        c.material = "rainbow".into();
+        normalize(&mut c, 1920.0, 1080.0);
+        assert!(c.organizer.root.is_empty());
+        assert_eq!(c.material, "glass");
+    }
+
+    #[test]
+    fn normalize_drops_duplicate_groups() {
+        let mut c = sample();
+        c.organizer.groups.push(GroupCfg {
+            id: c.organizer.groups[0].id.clone(),
+            name: "  开发工具  ".into(),
+            color: "nope".into(),
+        });
+        normalize(&mut c, 1920.0, 1080.0);
+        let names: Vec<&str> = c.organizer.groups.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names.len(), 5, "重复 id / 名字的分组应该被丢掉");
+    }
+
+    #[test]
+    fn normalize_drops_notes_of_removed_widgets() {
+        let mut c = sample();
+        let alive = c.widgets[0].id.clone();
+        c.notes.insert(alive.clone(), "留着".into());
+        c.notes.insert("ghost-1".into(), "该删".into());
+        normalize(&mut c, 1920.0, 1080.0);
+        assert!(c.notes.contains_key(&alive));
+        assert!(!c.notes.contains_key("ghost-1"));
+    }
+
+    #[test]
+    fn normalize_keeps_valid_weather() {
+        let mut c = sample();
+        c.weather.lat = 200.0;
+        normalize(&mut c, 1920.0, 1080.0);
+        assert!(c.weather.lat.abs() <= 90.0);
+        assert!(c.weather.lon.abs() <= 180.0);
     }
 }

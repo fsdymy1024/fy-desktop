@@ -62,7 +62,7 @@ export function openGallery(host, opts) {
   }).join('');
 
   host.innerHTML = `
-    <div class="gal" data-mat="${mat}">
+    <div class="gal" data-mat="${mat}" tabindex="-1" role="dialog" aria-label="添加组件">
       <div class="gal-head">
         <div>
           <h2>添加组件</h2>
@@ -81,6 +81,9 @@ export function openGallery(host, opts) {
     </div>`;
 
   host.hidden = false;
+  // 打开时把焦点移入浮层、关闭时归还，键盘用户不会「焦点还在背后」
+  const prevFocus = document.activeElement;
+  host.querySelector('.gal')?.focus();
 
   /** 材质状态只在这里改，保证「点按钮」和「外部全局同步」走同一条路。
    *  external 由 main.js 的 setGlobalMaterial 调用，避免两边各记一份 mat。 */
@@ -105,6 +108,7 @@ export function openGallery(host, opts) {
     host.hidden = true;
     host.innerHTML = '';
     document.removeEventListener('keydown', onKey);
+    prevFocus?.focus?.();
     onClose?.();
   };
   const onKey = (e) => {

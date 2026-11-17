@@ -59,6 +59,14 @@ jobs:
       - name: 校验三处版本号一致
         run: npm run check:version
 
+      - name: 校验前后端尺寸常量一致
+        run: npm run check:dims
+
+      # 测试门禁：以前流水线只有构建，没有测试；pure 逻辑（路径归属、配置归一化、
+      # 版本比较、文件名去重）坏了也能发出去
+      - name: 单元测试
+        run: npm run test
+
       - name: 导入签名证书（可选，未配 secrets 则跳过签名）
         env:
           FY_SIGN_PFX_BASE64: ${{ secrets.FY_SIGN_PFX_BASE64 }}

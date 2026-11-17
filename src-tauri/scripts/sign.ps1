@@ -59,7 +59,8 @@ if (-not $signtool) {
 }
 
 # 时间戳让签名在证书过期后依然有效。网络不通就退回不盖章，签名本身不受影响。
-$ts = 'http://timestamp.digicert.com'
+# 走 HTTPS：RFC 3161 的 TSA 支持 TLS，明文 HTTP 的时间戳响应可被中间人替换。
+$ts = 'https://timestamp.digicert.com'
 
 Write-Host "[sign] $File"
 & $signtool sign /sha1 $thumb /fd SHA256 /tr $ts /td SHA256 $File

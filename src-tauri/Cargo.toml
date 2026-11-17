@@ -1,6 +1,6 @@
 [package]
 name = "fy-desktop"
-version = "0.9.9"
+version = "1.0.0"
 description = "Windows 桌面玻璃小组件 + 桌面快捷方式收纳格子"
 authors = ["fy"]
 edition = "2021"
@@ -34,6 +34,7 @@ windows = { version = "0.62", features = [
   "Win32_NetworkManagement_WiFi",
   "Win32_System_Threading",
   "Win32_System_LibraryLoader",
+  "Win32_System_SystemInformation",
   "Win32_UI_Input_KeyboardAndMouse",
 ] }
 

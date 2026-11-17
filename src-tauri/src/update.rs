@@ -8,12 +8,20 @@
 //! 也不做「静默替换 exe」：桌面常驻程序把自己换掉，万一装到一半失败就再也起不来。
 //! 这里的做法是「检查 → 告诉你 → 你点一下 → 下载并静默安装」，主动权在人手上。
 
+use crate::consts::{REPO, UA};
 use serde::Serialize;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
-const REPO: &str = "fsdymy1024/fy-desktop";
-const UA: &str = "fy-desktop-updater";
+/// 手动检查的冷却时间：连着点「检查更新」不该连着打 GitHub（会吃 429）
+pub const MANUAL_COOLDOWN: Duration = Duration::from_secs(30);
+/// 自动检查之间至少隔这么久
+pub const AUTO_COOLDOWN: Duration = Duration::from_secs(3600);
+
+/// 最近一次检查结果。进程内缓存，避免重复请求，也让「检查失败后立刻再点」
+/// 直接拿到同一条错误而不是再打一次网络。
+static LAST_CHECK: Mutex<Option<(Instant, Update)>> = Mutex::new(None);
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct Update {
@@ -108,20 +116,8 @@ pub async fn check() -> Update {
         ..Default::default()
     };
 
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            out.error = e.to_string();
-            return out;
-        }
-    };
-
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let resp = match client
-        .get(&url)
+    let resp = match crate::http::get(&url, Duration::from_secs(12))
         .header("User-Agent", UA)
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -134,13 +130,30 @@ pub async fn check() -> Update {
         }
     };
 
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+    let status = resp.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
         // 仓库存在但还没有任何 release 也是 404，这里区分不了，措辞上两个都提一句
         out.error = format!("{REPO} 还没有发布版本（或仓库尚未同步）");
         return out;
     }
-    if !resp.status().is_success() {
-        out.error = format!("GitHub 返回 {}", resp.status());
+    // 429 / 403 基本都是限流。GitHub 会带 Retry-After，照着告诉用户要等多久
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status == reqwest::StatusCode::FORBIDDEN {
+        let wait = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        out.error = if wait.is_empty() {
+            format!("GitHub 限流（{status}），请稍后再试")
+        } else {
+            format!("GitHub 限流（{status}），建议 {wait} 秒后重试")
+        };
+        return out;
+    }
+    if !status.is_success() {
+        out.error = format!("GitHub 返回 {status}");
         return out;
     }
 
@@ -225,6 +238,26 @@ pub async fn check() -> Update {
     out
 }
 
+/// 带节流的检查：`gap` 内重复调用直接返回上次结果。
+///
+/// 手动检查用 30s（点两下不该打两次 GitHub），自动检查用 1h。
+/// 注意这只在本进程内生效——进程重启后计数清零，但自动检查本来也只跑一次。
+pub async fn check_throttled(gap: Duration) -> Update {
+    let cached = {
+        let g = crate::state::lock(&LAST_CHECK);
+        g.as_ref().map(|(at, u)| (at.elapsed(), u.clone()))
+    };
+    if let Some((elapsed, u)) = cached {
+        if elapsed < gap {
+            eprintln!("[update] {}s 内已检查过，直接用上次结果", gap.as_secs());
+            return u;
+        }
+    }
+    let u = check().await;
+    *crate::state::lock(&LAST_CHECK) = Some((Instant::now(), u.clone()));
+    u
+}
+
 /// 启动后自动检查（配置里 auto_update 关掉就不查）。
 /// 只发事件，不弹窗——桌面上突然弹个更新框很打扰，交给「关于」页和一条 toast。
 pub fn spawn_auto_check(app: AppHandle) {
@@ -238,7 +271,7 @@ pub fn spawn_auto_check(app: AppHandle) {
             eprintln!("[update] 自动更新已关闭，跳过检查");
             return;
         }
-        let u = check().await;
+        let u = check_throttled(AUTO_COOLDOWN).await;
         if !u.error.is_empty() {
             eprintln!("[update] 检查失败：{}", u.error);
             return;
@@ -266,12 +299,7 @@ pub async fn download(app: &AppHandle, asset: &str, version: &str) -> Result<Str
     if asset.is_empty() {
         return Err("这个版本没有提供 exe 安装包".into());
     }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(180))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut resp = client
-        .get(asset)
+    let mut resp = crate::http::get(asset, Duration::from_secs(180))
         .header("User-Agent", UA)
         .send()
         .await

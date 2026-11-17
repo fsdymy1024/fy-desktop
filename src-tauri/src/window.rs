@@ -36,6 +36,9 @@ pub fn spawn_hit_guard(app: AppHandle) {
         let mut last = true; // 初始是穿透
         loop {
             std::thread::sleep(std::time::Duration::from_millis(30));
+            if crate::is_shutting_down() {
+                return;
+            }
 
             let Some(win) = app.get_webview_window("main") else {
                 continue;
@@ -56,10 +59,7 @@ pub fn spawn_hit_guard(app: AppHandle) {
 
             let mut menu_outside = false;
             let (regions, force) = {
-                let mut h = match state.hit.lock() {
-                    Ok(h) => h,
-                    Err(p) => p.into_inner(),
-                };
+                let mut h = crate::state::lock(&state.hit);
                 // 托盘菜单开着时盯全局左键：点在菜单外就通知前端收起。
                 // 点别的应用 / 任务栏时我们窗口收不到任何事件，前端全靠这一手。
                 #[cfg(windows)]
@@ -210,6 +210,21 @@ pub fn spawn_show_watchdog(app: AppHandle, delay_ms: u64) {
     });
 }
 
+/// 单实例互斥体句柄。活到进程结束（或退出流程里显式释放）。
+///
+/// `HANDLE` 内部是裸指针，不实现 Send/Sync，放不进 static；
+/// 这里包一层并显式声明「跨线程使用是安全的」——它只是个内核对象句柄，
+/// 只在退出时被 CloseHandle 一次。
+#[cfg(windows)]
+struct MutexHandle(windows::Win32::Foundation::HANDLE);
+#[cfg(windows)]
+unsafe impl Send for MutexHandle {}
+#[cfg(windows)]
+unsafe impl Sync for MutexHandle {}
+
+#[cfg(windows)]
+static INSTANCE: std::sync::OnceLock<MutexHandle> = std::sync::OnceLock::new();
+
 /// 单实例检测。用命名互斥体，第二次启动直接退出。
 ///
 /// 多开会同时写同一份 config.json，两组窗口叠在同一块屏幕上，
@@ -221,7 +236,6 @@ pub fn already_running() -> bool {
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
 
-    static HELD: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     unsafe {
         // bInitialOwner = true：创建即持有，进程退出时系统自动释放
         let h = CreateMutexW(None, true, w!("Local\\fy-desktop-single-instance"));
@@ -231,14 +245,28 @@ pub fn already_running() -> bool {
                     let _ = windows::Win32::Foundation::CloseHandle(handle);
                     return true;
                 }
-                // 句柄必须活到进程结束，否则互斥体就释放了
-                let _ = HELD.set(handle.0 as usize);
+                // 句柄按真实类型存下来（以前存成 usize，将来若加了主动释放路径，
+                // 类型对不上就容易漏关或重复关）。退出时由 release_single_instance 关。
+                let _ = INSTANCE.set(MutexHandle(handle));
                 false
             }
             Err(e) => {
-                eprintln!("[window] 单实例互斥体创建失败：{e}");
+                // 建不出互斥体时保持「允许启动」：把用户挡在门外比多开更糟。
+                // 这条日志是排查「为什么能开两个」的唯一线索。
+                eprintln!("[window] 单实例互斥体创建失败，本次不阻止多开：{e}");
                 false
             }
+        }
+    }
+}
+
+/// 主动放掉单实例互斥体（退出流程用）。进程自然退出时系统也会回收，
+/// 这里显式关一次，便于自检/重启场景下马上能再起来。
+#[cfg(windows)]
+pub fn release_single_instance() {
+    if let Some(h) = INSTANCE.get() {
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(h.0);
         }
     }
 }
@@ -247,6 +275,9 @@ pub fn already_running() -> bool {
 pub fn already_running() -> bool {
     false
 }
+
+#[cfg(not(windows))]
+pub fn release_single_instance() {}
 
 /// 前端把热区上报上来（物理像素）。窗口铺满主屏，所以等价于屏幕坐标。
 pub fn set_regions(state: &AppState, rects: Vec<[f64; 4]>, force: bool) {

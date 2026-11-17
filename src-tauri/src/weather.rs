@@ -94,11 +94,13 @@ async fn try_open_meteo(cfg: &Config) -> Option<Weather> {
          &forecast_days=2&timezone=auto",
         cfg.weather.lat, cfg.weather.lon
     );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(6))
-        .build()
+    let v: serde_json::Value = crate::http::get(&url, Duration::from_secs(6))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
         .ok()?;
-    let v: serde_json::Value = client.get(url).send().await.ok()?.json().await.ok()?;
 
     let code = v.pointer("/current/weather_code")?.as_u64()? as u32;
     let temp = v.pointer("/current/temperature_2m")?.as_f64()?;
@@ -166,15 +168,36 @@ async fn try_open_meteo(cfg: &Config) -> Option<Weather> {
     })
 }
 
-/// 本地时刻（当天已过的分钟数），避免 extra 依赖。
-/// 时区按 UTC+8 兜底——项目面向中文用户，且这条只在 wttr 兜底链路里用到。
+/// 本地时刻（当天已过的分钟数）。
+///
+/// 以前写死 UTC+8：非东八区用户的「未来 6 小时」会整体错位，跨天标记也跟着错。
+/// 现在直接问系统要本地时间，夏令时由系统处理。
 fn local_minutes_now() -> u32 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    (((secs + 8 * 3600) % 86400) / 60) as u32
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetLocalTime;
+        let t = unsafe { GetLocalTime() };
+        return (t.wHour as u32) * 60 + t.wMinute as u32;
+    }
+    #[cfg(not(windows))]
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        ((secs % 86400) / 60) as u32
+    }
+}
+
+/// 天气接口的数值有时是字符串（wttr 一律 `"12"`），有时是数字。
+/// 只认 `as_str()` 的话，接口一换类型整条兜底链路就返回 None。
+fn num(v: Option<&serde_json::Value>) -> Option<f64> {
+    let v = v?;
+    if let Some(n) = v.as_f64() {
+        return Some(n);
+    }
+    v.as_str()?.trim().parse::<f64>().ok()
 }
 
 async fn try_wttr(cfg: &Config) -> Option<Weather> {
@@ -182,15 +205,17 @@ async fn try_wttr(cfg: &Config) -> Option<Weather> {
         "https://wttr.in/{},{}?format=j1&lang=zh",
         cfg.weather.lat, cfg.weather.lon
     );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
+    let v: serde_json::Value = crate::http::get(&url, Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
         .ok()?;
-    let v: serde_json::Value = client.get(url).send().await.ok()?.json().await.ok()?;
 
     let cur = v.pointer("/current_condition/0")?;
-    let temp: i32 = cur.get("temp_C")?.as_str()?.parse().ok()?;
-    let code: u32 = cur.get("weatherCode")?.as_str()?.parse().ok()?;
+    let temp = num(cur.get("temp_C"))?.round() as i32;
+    let code = num(cur.get("weatherCode"))? as u32;
     let (cond, icon) = wttr(code);
     let desc = cur
         .pointer("/lang_zh/0/value")
@@ -222,16 +247,8 @@ async fn try_wttr(cfg: &Config) -> Option<Weather> {
                 if abs < now_min {
                     continue;
                 }
-                let t = h
-                    .get("tempC")
-                    .and_then(|x| x.as_str())
-                    .and_then(|s| s.parse::<i32>().ok())
-                    .unwrap_or(0);
-                let c = h
-                    .get("weatherCode")
-                    .and_then(|x| x.as_str())
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(119);
+                let t = num(h.get("tempC")).map(|f| f.round() as i32).unwrap_or(0);
+                let c = num(h.get("weatherCode")).unwrap_or(119.0) as u32;
                 hours.push(Hour {
                     label: format!("{hh}时"),
                     temp: t,
@@ -243,16 +260,10 @@ async fn try_wttr(cfg: &Config) -> Option<Weather> {
         }
     }
 
-    let high = v
-        .pointer("/weather/0/maxtempC")
-        .and_then(|x| x.as_str())
-        .and_then(|s| s.parse::<f64>().ok())
+    let high = num(v.pointer("/weather/0/maxtempC"))
         .map(|f| f.round() as i32)
         .unwrap_or(temp);
-    let low = v
-        .pointer("/weather/0/mintempC")
-        .and_then(|x| x.as_str())
-        .and_then(|s| s.parse::<f64>().ok())
+    let low = num(v.pointer("/weather/0/mintempC"))
         .map(|f| f.round() as i32)
         .unwrap_or(temp);
 
@@ -281,6 +292,10 @@ pub async fn fetch(cfg: &Config) -> Option<Weather> {
 pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
+            if crate::is_shutting_down() {
+                eprintln!("[weather] 收到退出信号，停止刷新");
+                return;
+            }
             let cfg = match app.try_state::<crate::state::AppState>() {
                 Some(s) => s.config(),
                 None => Config::default_for(1920.0, 1080.0),
@@ -297,7 +312,7 @@ pub fn spawn(app: AppHandle) {
                     let _ = app.emit("weather:error", ());
                 }
             }
-            tokio_sleep(Duration::from_secs(900)).await;
+            tokio_sleep(crate::consts::WEATHER_INTERVAL).await;
         }
     });
 }
@@ -305,4 +320,18 @@ pub fn spawn(app: AppHandle) {
 async fn tokio_sleep(d: Duration) {
     // 不额外引 tokio 依赖：用阻塞线程包一层足够，15 分钟一次的函数不值得优化
     let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn num_accepts_string_and_number() {
+        assert_eq!(num(Some(&serde_json::json!("12"))), Some(12.0));
+        assert_eq!(num(Some(&serde_json::json!(12))), Some(12.0));
+        assert_eq!(num(Some(&serde_json::json!("-3.5"))), Some(-3.5));
+        assert_eq!(num(Some(&serde_json::json!("阴"))), None);
+        assert_eq!(num(None), None);
+    }
 }

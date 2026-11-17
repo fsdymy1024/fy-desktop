@@ -72,13 +72,10 @@ pub async fn search(q: &str) -> Result<Vec<Place>, String> {
         "https://photon.komoot.io/api/?q={}&limit=10",
         urlencode(q)
     );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .user_agent("fy-desktop/0.4 (desktop widget)")
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let resp = client.get(url).send().await.map_err(|e| format!("搜索失败: {e}"))?;
+    let resp = crate::http::get(&url, Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| format!("搜索失败: {e}"))?;
     let v: Resp = resp.json().await.map_err(|e| format!("解析失败: {e}"))?;
 
     let mut out = Vec::new();

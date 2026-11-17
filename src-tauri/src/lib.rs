@@ -7,8 +7,10 @@
 pub mod autostart;
 pub mod commands;
 pub mod config;
+pub mod consts;
 pub mod desktop;
 pub mod geo;
+pub mod http;
 pub mod monitor;
 pub mod state;
 pub mod tray;
@@ -18,13 +20,26 @@ pub mod window;
 
 use state::AppState;
 use tauri::Manager;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 /// 进程启动时刻。用来量「从进程起来到前端画完」到底花了多久。
 pub static BORN: OnceLock<std::time::Instant> = OnceLock::new();
 /// 前端有没有跑到 `ui_ready`。窗口显示已经不再依赖它，这个标志只用于诊断与兜底。
 pub static UI_READY: AtomicBool = AtomicBool::new(false);
+/// 退出信号。后台线程（指标、天气、穿透守卫）看到它就收工，
+/// 而不是靠「进程退出时被系统一起干掉」——自检、多开场景下那种假设不成立。
+pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+pub fn is_shutting_down() -> bool {
+    SHUTDOWN.load(Ordering::Relaxed)
+}
+
+/// 通知所有后台线程退出，并放掉单实例互斥体。幂等。
+pub fn begin_shutdown() {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+    window::release_single_instance();
+}
 
 /// 各组件的默认尺寸（设计像素）。
 /// 现在只作为「预设档位」的推导结果存在：小 102×102、中 210×102、大 210×126。
@@ -51,6 +66,7 @@ pub fn run() {
             commands::boot,
             commands::ui_ready,
             commands::save_config,
+            commands::get_config,
             commands::desktop_view,
             commands::desktop_icons,
             commands::open_path,
@@ -64,11 +80,14 @@ pub fn run() {
             commands::tidy_apply,
             commands::create_group,
             commands::rename_group,
+            commands::move_group,
             commands::delete_group,
+            commands::set_note,
             commands::set_hit_regions,
             commands::set_menu_rect,
             commands::glass_snapshot,
             commands::set_autostart,
+            commands::get_autostart,
             commands::weather_now,
             commands::geo_search,
             commands::set_weather_place,
@@ -87,6 +106,17 @@ pub fn run() {
                 .expect("主窗口必须在配置里声明");
 
             window::fill_screen(&win)?;
+
+            // 多屏尚未支持：只铺主屏。所有「主屏假设」都收敛在 fill_screen 里，
+            // 将来扩多屏只需改那一处（副屏负坐标会让热区整体偏移）。
+            if let Ok(list) = win.available_monitors() {
+                if list.len() > 1 {
+                    eprintln!(
+                        "[window] 检测到 {} 个显示器，当前只铺主屏（已知限制）",
+                        list.len()
+                    );
+                }
+            }
 
             // 窗口一创建就显示出来。
             // body 是 transparent 的，提前显示不会闪白；而「等前端就绪才显示」
@@ -133,6 +163,9 @@ pub fn run() {
             // 那 ~100ms 由 glass::snapshot 自己瞬时开关（见 glass.rs）。
 
             tray::create(app.handle())?;
+
+            // 图标缓存只增不减会一直长，启动时清一次过期条目（7 天没动 / 超过 16MB）
+            desktop::icons::prune_cache();
 
             // FY_OPEN_ROOT=1：启动后立刻打开收纳目录。
             // 「打开文件夹」这条链路没法靠点按钮来自动验证，留个入口给排查用。

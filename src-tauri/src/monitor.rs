@@ -52,13 +52,10 @@ static LATENCY: AtomicU32 = AtomicU32::new(0);
 static WIFI: Mutex<Option<(Link, Instant)>> = Mutex::new(None);
 
 pub fn wifi_link() -> Link {
-    let mut guard = match WIFI.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
+    let mut guard = crate::state::lock(&WIFI);
     let fresh = guard
         .as_ref()
-        .map(|(link, at)| !link.kind.is_empty() && at.elapsed() < Duration::from_secs(12))
+        .map(|(link, at)| !link.kind.is_empty() && at.elapsed() < crate::consts::WIFI_CACHE_TTL)
         .unwrap_or(false);
     if fresh {
         return guard.as_ref().map(|(l, _)| l.clone()).unwrap_or_default();
@@ -138,7 +135,10 @@ fn first_percent(s: &str) -> Option<u32> {
 fn probe_latency() -> u32 {
     let start = Instant::now();
     // 阿里 DNS 的 443，比 ICMP 稳且不需要提权
-    let addr = std::net::SocketAddr::from(([223, 5, 5, 5], 443));
+    let addr = match crate::consts::PROBE_HOST.parse::<std::net::IpAddr>() {
+        Ok(ip) => std::net::SocketAddr::new(ip, crate::consts::PROBE_PORT),
+        Err(_) => return 0,
+    };
     match TcpStream::connect_timeout(&addr, Duration::from_millis(900)) {
         Ok(_) => start.elapsed().as_millis().min(999) as u32,
         Err(_) => 0,
@@ -167,7 +167,7 @@ fn egress_ip() -> Option<std::net::Ipv4Addr> {
     use std::net::UdpSocket;
     let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
     // connect 对 UDP 只是记录对端，不产生流量
-    sock.connect("223.5.5.5:80").ok()?;
+    sock.connect(crate::consts::EGRESS_PROBE).ok()?;
     match sock.local_addr().ok()?.ip() {
         IpAddr::V4(v4) if !v4.is_loopback() && !v4.is_link_local() => Some(v4),
         _ => None,
@@ -283,8 +283,16 @@ pub fn spawn(app: AppHandle) {
         // 延迟单独线程，避免 900ms 的超时把 1s 心跳拖歪
         spawn_latency();
 
+        // 推送连续失败时降频：窗口销毁/重建期间 emit 会一直报错，
+        // 每秒打一条日志既没用又刷屏
+        let mut emit_fail: u32 = 0;
+
         loop {
-            std::thread::sleep(Duration::from_millis(1000));
+            std::thread::sleep(crate::consts::METRICS_INTERVAL);
+            if crate::is_shutting_down() {
+                eprintln!("[monitor] 收到退出信号，停止采集");
+                return;
+            }
             tick += 1;
 
             sys.refresh_cpu_usage();
@@ -304,7 +312,7 @@ pub fn spawn(app: AppHandle) {
             smooth_down = smooth_down * (1.0 - a) + down_raw * a;
             smooth_up = smooth_up * (1.0 - a) + up_raw * a;
 
-            if tick % 15 == 0 {
+            if tick % crate::consts::DISK_REFRESH_TICKS == 0 {
                 disks.refresh(true);
             }
 
@@ -336,8 +344,18 @@ pub fn spawn(app: AppHandle) {
                     metrics.cpu, metrics.mem, metrics.disk, metrics.down, metrics.ip, metrics.iface
                 );
             }
-            if let Err(e) = app.emit("metrics", &metrics) {
-                eprintln!("[monitor] 推送失败: {e}");
+            match app.emit("metrics", &metrics) {
+                Ok(()) => emit_fail = 0,
+                Err(e) => {
+                    emit_fail += 1;
+                    if emit_fail == 1 || emit_fail % 30 == 0 {
+                        eprintln!("[monitor] 推送失败（第 {emit_fail} 次）: {e}");
+                    }
+                    // 连续失败说明前端长时间不在（页面重建中），退避一下再试
+                    if emit_fail > 5 {
+                        std::thread::sleep(Duration::from_millis(1000 * (emit_fail.min(10) as u64)));
+                    }
+                }
             }
         }
     });
@@ -345,8 +363,11 @@ pub fn spawn(app: AppHandle) {
 
 fn spawn_latency() {
     std::thread::spawn(|| loop {
+        if crate::is_shutting_down() {
+            return;
+        }
         let ms = probe_latency();
         LATENCY.store(ms, Ordering::Relaxed);
-        std::thread::sleep(Duration::from_secs(5));
+        std::thread::sleep(crate::consts::LATENCY_INTERVAL);
     });
 }
