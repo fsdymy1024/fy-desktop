@@ -69,7 +69,14 @@ fy-desktop_0.9.2_x64-setup.exe /S
 
 **从源码**
 
-需要 Rust 与 Node.js（Tauri v2 依赖 WebView2，Windows 11 自带）。
+前置要求：
+
+| 依赖 | 版本 | 说明 |
+| --- | --- | --- |
+| Rust | 1.77+（stable） | CI 用 `dtolnay/rust-toolchain@stable` |
+| Node.js | 20 | 仓库 CI 用 Node 20，本地建议对齐 |
+| WebView2 | 随系统 | Windows 11 自带；Windows 10 需装 Evergreen Runtime |
+| MSVC 生成工具 | VS 2022 Build Tools | Rust 在 Windows 上的链接器 |
 
 ```bash
 npm install
@@ -165,7 +172,7 @@ Rust 线程每 30ms 查一次光标位置，进出热区时切换穿透开关。
 
 ```
 fy-desktop/
-├── src/                         前端（无框架 ESM）
+├── src/renderer/                前端（无框架 ESM）
 │   ├── index.html
 │   ├── css/app.css              设计令牌 + 全部样式
 │   └── js/
@@ -173,28 +180,38 @@ fy-desktop/
 │       ├── widgets.js           七个组件的模板与数据绑定
 │       ├── organizer.js         收纳面板渲染与拖拽
 │       ├── gallery.js           组件库面板
-│       ├── bridge.js            invoke / listen 的薄封装 + 诊断
+│       ├── about.js             关于页（版本 / 检查更新 / 自动更新）
+│       ├── floatwin.js          浮层拖动与点遮罩关闭
+│       ├── bridge.js            invoke / listen 的薄封装 + 订阅清理 + 诊断
+│       ├── fallback.js          渲染层没起来时的兜底错误屏（外部脚本，受 CSP 允许）
+│       ├── debug.js             截图/自检探针（FY_SHOT / FY_UI，按需动态加载）
 │       └── util.js              转义、走势图、天气图标
 ├── src-tauri/                   Rust 侧
 │   ├── src/
-│   │   ├── lib.rs               启动、自检、截图自检
+│   │   ├── lib.rs               启动、自检、截图自检、退出信号
 │   │   ├── commands.rs          全部 IPC
-│   │   ├── config.rs            配置读写与默认布局
+│   │   ├── consts.rs            业务常量（仓库、探测地址、采样周期、配色）
+│   │   ├── http.rs              全局复用的 reqwest 客户端
+│   │   ├── config.rs            配置读写、校验归一化与默认布局
 │   │   ├── state.rs             共享状态（配置、缩放、热区）
-│   │   ├── window.rs            铺满屏幕、穿透守卫、置顶/回底
+│   │   ├── window.rs            铺满屏幕、穿透守卫、置顶/回底、单实例
 │   │   ├── monitor.rs           系统与网络指标采样
 │   │   ├── weather.rs           天气双源
+│   │   ├── geo.rs               中文地名搜索（photon / OSM）
+│   │   ├── update.rs            检查更新与下载安装包
 │   │   ├── autostart.rs         开机自启（HKCU）
-│   │   ├── tray.rs              托盘菜单
+│   │   ├── tray.rs              托盘
 │   │   └── desktop/
-│   │       ├── mod.rs           桌面扫描、真实文件夹收纳
-│   │       ├── icons.rs         Shell 图标提取 + 缓存
+│   │       ├── mod.rs           桌面扫描、真实文件夹收纳、路径归属校验
+│   │       ├── icons.rs         Shell 图标提取 + 缓存与过期清理
 │   │       └── glass.rs         抓屏、模糊、排除自身
 │   ├── capabilities/default.json 权限（事件、穿透、显示隐藏）
-│   └── tauri.conf.json          窗口与打包配置
+│   ├── nsis/hooks.nsh           安装/卸载钩子
+│   ├── scripts/sign.ps1         Authenticode 签名（无证书自动跳过）
+│   └── tauri.conf.json          窗口、CSP 与打包配置
 ├── design/                      视觉基准稿（静态 HTML）
 ├── docs/                        需求、设计、版本控制、截图
-├── scripts/                     截图自检
+├── scripts/                     shot.mjs / selftest.mjs / check-version.mjs / check-dims.mjs
 └── assets/                      应用图标源图
 ```
 
@@ -205,8 +222,15 @@ fy-desktop/
 | `npm run dev` | 开发模式启动 |
 | `npm run build` | 出安装包（NSIS） |
 | `npm run check` | `cargo check`，改完 Rust 先跑这个 |
+| `npm run test` | `cargo test`：路径归属、配置归一化、版本比较、文件名去重等纯逻辑单测 |
+| `npm run check:version` | 校验 package.json / Cargo.toml / tauri.conf.json 三处版本号一致 |
+| `npm run check:dims` | 校验后端 `config.rs` 与前端 `widgets.js` 的设计尺寸常量一致 |
+| `npm run selftest` | 编译 release 后跑无界面自检（只碰临时目录） |
 | `npm run shot` | 截一张真实渲染图到 `docs/app-preview.png` |
 | `npm run icon` | 从 `assets/icon.svg` 重新生成 ico / png / icns 全套图标 |
+
+发布流水线（`.github/workflows/release.yml`）在构建前依次跑 `check:version`、`check:dims`、`test`，
+任何一步失败都不会出包。
 
 **签名**：构建时自动执行（`tauri.conf.json` 的 `signCommand` → `src-tauri/scripts/sign.ps1`）。
 证书指纹按 `FY_SIGN_THUMBPRINT` 环境变量 → `src-tauri/scripts/sign.env.json` 的顺序读取，
@@ -215,6 +239,18 @@ fy-desktop/
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File src-tauri/scripts/make-cert.ps1
 ```
+
+**换成正式证书的清单**（v1.0.0 目标）：
+
+1. 向 CA 申请代码签名证书（OV 或 EV，需要实名/组织验证），导出为带口令的 `.pfx`；
+2. 把 `.pfx` 的 base64 与口令分别存成仓库 Secrets（如 `FY_SIGN_PFX_BASE64` / `FY_SIGN_PFX_PASSWORD`）；
+3. CI 里先导入证书库再构建：
+   `Import-PfxCertificate -FilePath cert.pfx -CertStoreLocation Cert:\CurrentUser\My`，
+   取到指纹写进 `FY_SIGN_THUMBPRINT`（`sign.ps1` 按指纹找证书）；
+4. 验证结果：`Get-AuthenticodeSignature .\fy-desktop_*-setup.exe | Format-List`，
+   `Status` 必须是 `Valid`，且 `SignerCertificate.NotAfter` 晚于发布日期；
+5. 时间戳固定走 `https://timestamp.digicert.com`（RFC 3161），证书过期后签名依然有效；
+6. 换证书后跑一次 `npm run selftest`，确认安装包路径没有因文件名变化而失效。
 
 **自检**（不需要人看界面，9 项断言，只碰临时目录）：
 
@@ -230,6 +266,22 @@ FY_SELFTEST=1 src-tauri/target/release/fy-desktop.exe
 
 **打开目录**：`FY_OPEN_ROOT=1` 启动即打开收纳根目录，用来单独验证「打开文件夹」这条链路；
 每次打开动作（含 ShellExecute 返回码）都会追加到 `%APPDATA%\com.fy.desktop\launch.log`。
+
+## WebView 启动参数
+
+`tauri.conf.json` 的 `additionalBrowserArgs` 只能写成一行字符串（JSON 不支持注释），
+逐项说明放在这里：
+
+| 参数 | 用途 | 去掉会怎样 |
+| --- | --- | --- |
+| `--disable-features=msWebOOUI,msPdfOOUI` | 关掉 WebView2 自带的「下载/PDF」UI 覆盖层 | 透明桌面上可能闪出白色覆盖层 |
+| `msSmartScreenProtection` | 关掉 SmartScreen 的内嵌提示层 | 可能盖住组件内容 |
+| `CalculateNativeWinOcclusion` | 关掉窗口遮挡计算 | 被别的窗口盖住后 WebView 认为不可见，可能停渲染 |
+| `--disable-background-timer-throttling` | 定时器不降频 | 时钟/指标刷新会被降到 1 分钟级 |
+| `--disable-renderer-backgrounding` | 渲染进程不降优先级 | 桌面层被挡住时画面卡顿 |
+| `--disable-backgrounding-occluded-windows` | 被遮挡的窗口不降级 | 桌面常驻窗口随时可能被遮住，保留有据 |
+
+前三项与后三项都是「桌面常驻 + 透明窗口」这个形态的必要条件，不是随手加的。
 
 ## 数据与隐私
 
@@ -273,8 +325,8 @@ FY_SELFTEST=1 src-tauri/target/release/fy-desktop.exe
 | v0.9.7 | 三档尺寸对齐 6px 吸附网格（中/大 = 两小 + 一缝）；天气地区与关于窗口放大；浮层改回点遮罩关闭、托盘菜单点外部收回；修复：打开所在位置跳到「文档」 |
 | v0.9.8 | 修复「检查更新」永远查不到新版本（release tag 占位符写错 + 资产文件名兜底解析） |
 | v0.9.9 | 桌面收纳：正方形格子、每排 7 个、单行标签、右上角「全部折叠/展开」、右键菜单与组件统一 |
-| v0.10.0 | 格子内拖拽排序、图标白底抠除、多屏支持、备忘录可编辑、模糊强度可调 |
-| v1.0.0 | 正式代码签名证书、GitHub 仓库与 release 流程跑通 |
+| v1.0.0 | 安全与一致性：最小 CSP、文件命令路径归属校验、配置版本号与增量写回、备忘录落盘、单测与 CI 门禁 |
+| v1.1.0 | 格子内拖拽排序、图标白底抠除、多屏支持、备忘录可编辑、模糊强度可调、正式代码签名证书 |
 
 ## 许可
 

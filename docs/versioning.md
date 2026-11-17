@@ -17,7 +17,7 @@ main ──●──●──●──────────●──●──
 
 | 分支 | 用途 | 生命周期 | 保护 |
 | --- | --- | --- | --- |
-| `main` | 永远可运行、可截图、可演示 | 长期 | 不直接提交功能代码；合并前必须 `npm run smoke` 通过 |
+| `main` | 永远可运行、可截图、可演示 | 长期 | 不直接提交功能代码；合并前必须 `npm run test` 与 `npm run selftest` 通过 |
 | `feat/<scope>` | 新功能 | ≤ 3 天 | 从 `main` 切出，合并后删除 |
 | `fix/<scope>` | 缺陷修复 | ≤ 1 天 | 同上 |
 | `docs/<scope>` | 纯文档 | 随时 | 可直提 `main` |
@@ -110,7 +110,11 @@ feat(build): 增加 NSIS 安装包与静默安装参数
 | `MINOR` | 向下兼容的新能力 | 新增网络组件、换渲染引擎、新增材质、新增安装包 |
 | `PATCH` | 向下兼容的修复 | 修天气回退失败、修格子补位错位 |
 
-**0.x 阶段的约定**：`0.MINOR.PATCH`，MINOR 承担"能力批次"的含义，允许在 0.x 内做小幅破坏性调整，但**必须**在 CHANGELOG 里用 ⚠️ 标出，并提供配置迁移说明。
+**0.x 阶段的历史约定**：`0.MINOR.PATCH`，MINOR 承担"能力批次"的含义，允许在 0.x 内做小幅破坏性调整，但**必须**在 CHANGELOG 里用 ⚠️ 标出，并提供配置迁移说明。
+
+**1.0.0 起的约定**：`MAJOR` 只在破坏兼容时递增（配置结构不兼容、移除组件、IPC 命令签名变化），
+且必须同步升 `config.rs` 的 `CONFIG_VERSION` 并写迁移；新增能力升 `MINOR`；修复升 `PATCH`。
+`1.0.0` 的配置版本与 `0.9.9` 相同，属兼容升级，用户无需迁移。
 
 **版本号唯一来源**：三处必须一致，打包前用 `npm run check:version` 校验（缺失则手工核对）。
 
@@ -140,9 +144,11 @@ feat(build): 增加 NSIS 安装包与静默安装参数
 # 1. 确认干净、版本号一致、能编译
 git status                        # 工作区必须干净
 npm run check:version             # package.json / Cargo.toml / tauri.conf.json
+npm run check:dims                # Rust 与前端的设计尺寸常量
+npm run test                      # cargo test（纯逻辑单测）
 cargo build --release --manifest-path src-tauri/Cargo.toml
 
-# 2. 无界面自检（9 项，只碰临时目录）
+# 2. 无界面自检（只碰临时目录）
 npm run selftest
 
 # 3. 落 CHANGELOG：[Unreleased] → [X.Y.Z] - YYYY-MM-DD，并同步 design / requirements / README
@@ -180,8 +186,10 @@ git push origin main --follow-tags
 **发布前检查清单**
 
 - [ ] `npm run check:version` 三处一致
+- [ ] `npm run check:dims` 尺寸常量一致
+- [ ] `npm run test` 单测全过
 - [ ] `cargo build --release` 无警告
-- [ ] `FY_SELFTEST=1` 8 项全过
+- [ ] `FY_SELFTEST=1` 自检全部断言通过
 - [ ] 安装包能装能卸，卸载后 `%APPDATA%\com.fy.desktop` 与收纳目录仍在
 - [ ] 首启自启项落在 HKCU，HKLM 干净
 - [ ] `npm run shot` 截图正常，无空白组件、无文字截断
