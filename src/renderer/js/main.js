@@ -122,6 +122,48 @@ async function boot() {
     }, 400);
   // FY_UI=edit：进编辑模式，用来核对虚线框、参考线这些只在编辑态出现的东西
   if (b.uitest === 'edit') setTimeout(() => setEdit(true), 400);
+  // FY_UI=orgfold：进编辑态（右上角工具栏才可见）再点一次「全部折叠/展开」，
+  // 用来核对按钮图标和整列分组是否真的收起
+  if (b.uitest === 'orgfold')
+    setTimeout(() => {
+      setEdit(true);
+      waitPanel((panel) => {
+        const btn = panel.querySelector('[data-act="fold-all"]');
+        S.foldProbe = { found: !!btn, before: (S.cfg.organizer.folded || []).length };
+        btn?.click();
+        S.foldProbe.after = (S.cfg.organizer.folded || []).length;
+        S.foldProbe.shelves = panel.querySelectorAll('.shelf.folded').length;
+        setTimeout(() => dumpLayout(), 200);
+      });
+    }, 400);
+  // FY_UI=orgmenu：在面板里右键，核对菜单项与组件右键菜单的结构一致（无尺寸/布局项）
+  if (b.uitest === 'orgmenu')
+    setTimeout(
+      () =>
+        waitPanel((panel) => {
+          const head = panel.querySelector('.shelves') || panel;
+          const r = head.getBoundingClientRect();
+          head.dispatchEvent(
+            new MouseEvent('contextmenu', { bubbles: true, clientX: r.left + 120, clientY: r.top + 80 })
+          );
+          setTimeout(() => {
+            S.menuLate = { hidden: $('#menu').hidden };
+          }, 5000);
+          setTimeout(() => {
+            const m = $('#menu');
+            S.menuProbe = {
+              hidden: m.hidden,
+              items: [...m.querySelectorAll('button')].map((b) => b.textContent.trim()),
+              rect: (() => {
+                const q = m.getBoundingClientRect();
+                return [Math.round(q.left), Math.round(q.top), Math.round(q.width), Math.round(q.height)];
+              })()
+            };
+            dumpLayout();
+          }, 300);
+        }),
+      400
+    );
   if (b.uitest === 'group') setTimeout(() => promptInput('新建分组', '例如：设计素材'), 400);
   // FY_UI=gal：打开组件库；FY_UI=menu：在首张卡片上弹右键菜单
   // FY_UI=galadd / menusize：再点一下，用来验证「按档位添加」「右键换档」真的生效
@@ -200,6 +242,13 @@ async function boot() {
       openFirstCardMenu();
       setTimeout(() => document.querySelector('#menu button')?.click(), 600);
     }, 500);
+}
+
+/** 调试用：等收纳面板真的渲染出来（要等桌面扫描返回，可能要几秒） */
+function waitPanel(cb, tries = 80) {
+  const panel = $('#organizer');
+  if (panel?.querySelector('.org-head')) return cb(panel);
+  if (tries > 0) setTimeout(() => waitPanel(cb, tries - 1), 150);
 }
 
 /** 调试用：在首张卡片上派发一次右键，等价于用户点右键 */
@@ -714,6 +763,47 @@ const handlers = {
     S.cfg.organizer.folded = [...f];
     renderPanel();
     save();
+  },
+  /** 顶部按钮：一次折叠/展开所有分组（已经全折起来了就反过来全展开） */
+  foldAll: () => {
+    const ids = S.cfg.organizer.groups.map((g) => g.id);
+    const cur = new Set(S.cfg.organizer.folded || []);
+    S.cfg.organizer.folded = ids.length && ids.every((id) => cur.has(id)) ? [] : ids;
+    renderPanel();
+    save();
+  },
+  /** 面板顶部 / 空白处右键：跟组件右键菜单同一套结构（标题 · 材质 · 动作），
+   *  但面板没有尺寸档位，所以不出「尺寸」和「调整布局」这两段。 */
+  panelMenu: (e) => {
+    const o = S.cfg.organizer;
+    const groups = S.view?.groups ?? o.groups ?? [];
+    const total = groups.reduce((n, g) => n + (g.items?.length || 0), 0);
+    const ids = o.groups.map((g) => g.id);
+    const cur = new Set(o.folded || []);
+    const allFolded = ids.length > 0 && ids.every((id) => cur.has(id));
+    const curMat = S.cfg.material || 'glass';
+
+    const items = [{ head: true, label: `桌面收纳 · ${groups.length} 组 · ${total} 项` }];
+
+    // 面板没有自己的材质字段，材质只有全局一份：这里改的是全局，
+    // 和组件库里的材质按钮、卡片右键的「材质」都是同一套值。
+    items.push({ sep: true });
+    items.push({ head: true, label: `材质 · ${{ glass: '玻璃', dusk: '暮色', solid: '石墨' }[curMat] || curMat}` });
+    for (const [k, label] of [['glass', '玻璃'], ['dusk', '暮色'], ['solid', '石墨']]) {
+      items.push({
+        label: `${k === curMat ? '✓' : '　'} ${label}`,
+        disabled: k === curMat,
+        act: () => setGlobalMaterial(k)
+      });
+    }
+
+    items.push({ sep: true });
+    items.push({ label: allFolded ? '全部展开' : '全部折叠', act: () => handlers.foldAll() });
+    items.push({ label: '新建分组…', act: () => handlers.addGroup() });
+    items.push({ label: '在资源管理器中打开', act: () => handlers.openRoot() });
+    items.push({ label: '刷新', act: () => handlers.refresh() });
+
+    showMenu({ x: e.clientX, y: e.clientY }, items);
   },
   addGroup: async () => {
     const name = await promptInput('新建分组', '例如：设计素材');
@@ -1592,6 +1682,25 @@ function dumpLayout() {
         const r = $('#organizer').getBoundingClientRect();
         return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
       })(),
+      // 收纳格子：必须是正方形、每排最多 7 个。这些数只能量出来，看不准
+      org: (() => {
+        const el = $('#organizer');
+        const grid = el.querySelector('.shelf:not(.folded) .cells');
+        const kids = grid ? [...grid.children] : [];
+        const top = kids[0]?.offsetTop;
+        const first = kids[0]?.getBoundingClientRect();
+        return {
+          w: Math.round(el.getBoundingClientRect().width),
+          cols: kids.filter((k) => k.offsetTop === top).length,
+          cell: first ? [Math.round(first.width), Math.round(first.height)] : null,
+          shelves: el.querySelectorAll('.shelf').length,
+          foldedShelves: el.querySelectorAll('.shelf.folded').length,
+          foldedCfg: (S.cfg.organizer.folded || []).length
+        };
+      })(),
+      foldProbe: S.foldProbe || null,
+      menuProbe: S.menuProbe || null,
+      menuLate: S.menuLate || null,
       glass: document.body.dataset.glass === '1',
       // 材质的三个来源必须一致：DOM 属性（CSS 用）、内存配置、磁盘配置
       mat: {

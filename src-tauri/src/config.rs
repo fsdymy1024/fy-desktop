@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const CONFIG_VERSION: u32 = 3;
+pub const CONFIG_VERSION: u32 = 4;
 
 /// 最小吸附网格 / 最小缝隙（设计像素）。和前端 main.js 的 GRID / GAP 是同一套数。
 pub const GRID: f64 = 6.0;
@@ -145,13 +145,22 @@ fn d_weather() -> WeatherCfg {
     }
 }
 
+/// 收纳面板的宽度。
+///
+/// 格子是正方形、每排 7 个（organizer.js 的 COLS），所以宽度不能随手给：
+/// 7 × 62 + 6 × 4(格子间隙) + 左右各 14(面板内边距) ≈ 486，
+/// 每个格子正好落在 60 出头。给宽了格子会跟着长成大方块，收纳面板就白占地方。
+pub fn org_width_for(design_w: f64) -> f64 {
+    (design_w * 0.38).clamp(430.0, 520.0).round()
+}
+
 impl Config {
     /// 首次运行的默认布局：左列小组件，右侧收纳面板。
     /// 坐标是「设计像素」——屏幕实际像素除以缩放比之后的坐标系。
     pub fn default_for(design_w: f64, design_h: f64) -> Self {
     let _ = design_h;
         let groups = default_groups();
-        let org_w = (design_w * 0.40).clamp(430.0, 600.0).round();
+        let org_w = org_width_for(design_w);
         // 0 = 高度跟内容走。面板里 5 个分组通常只占半屏，
         // 固定成整屏高会留下一大片死白。
         let org_h = 0.0;
@@ -257,6 +266,15 @@ pub fn load_or_default(design_w: f64, design_h: f64) -> Config {
     let p = file();
     if let Ok(text) = std::fs::read_to_string(&p) {
         if let Ok(mut cfg) = serde_json::from_str::<Config>(&text) {
+            // v3 → v4：格子改成正方形、每排 7 个。老配置的面板宽度（常见 600）
+            // 会把 7 个格子拉成 78px 的大方块，所以按新算法重算一次宽度，
+            // 右边缘保持不动，视觉上只是左边收窄一条。
+            if cfg.version < 4 {
+                let w = org_width_for(design_w);
+                let right = cfg.organizer.x + cfg.organizer.w;
+                cfg.organizer.w = w;
+                cfg.organizer.x = (right - w).max(0.0);
+            }
             cfg.version = CONFIG_VERSION;
             return cfg;
         }

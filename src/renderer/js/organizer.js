@@ -8,8 +8,9 @@
 
 import { esc } from './util.js';
 
-const COLS = 8;
-const LOOSE_PREVIEW = 16;
+const COLS = 7;
+// 预览条数按「整行铺满」定：13 项 + 「更多」= 14 = 两排（COLS 7）
+const LOOSE_PREVIEW = COLS * 2 - 1;
 
 const ICON_CACHE = new Map();
 let renderToken = 0;
@@ -93,6 +94,8 @@ export function renderOrganizer(el, cfg, view, handlers) {
   };
 
   const foldedIds = new Set(cfg.organizer.folded || []);
+  // 所有分组都折起来了才把按钮切成「全部展开」
+  const allFolded = groups.length > 0 && groups.every((g) => foldedIds.has(g.id));
   const total = groups.reduce((n, g) => n + (g.items?.length || 0), 0);
   const looseTotal = loose.items.length;
 
@@ -102,6 +105,13 @@ export function renderOrganizer(el, cfg, view, handlers) {
         <span class="org-title">桌面收纳</span>
         <span class="org-sub">${groups.length} 组 · ${total} 项</span>
         <div class="org-tools">
+          <button class="iconbtn" data-act="fold-all" title="${allFolded ? '全部展开' : '全部折叠'}">
+            ${
+              allFolded
+                ? '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3.4L6 6l3-2.6"/><path d="M3 6.9L6 9.5l3-2.6"/></svg>'
+                : '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.6L6 6l3 2.6"/><path d="M3 5.1L6 2.5l3 2.6"/></svg>'
+            }
+          </button>
           <button class="iconbtn" data-act="add-group" title="新建分组">
             <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 2.5v7M2.5 6h7"/></svg>
           </button>
@@ -169,6 +179,7 @@ export function renderOrganizer(el, cfg, view, handlers) {
       return;
     }
     const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'fold-all') return handlers.foldAll();
     if (act === 'add-group') return handlers.addGroup();
     if (act === 'open-root') return handlers.openRoot();
     if (act === 'refresh') return handlers.refresh();
@@ -192,12 +203,17 @@ export function renderOrganizer(el, cfg, view, handlers) {
       handlers.menu(e, cell.dataset.path, cell.dataset.group);
       return;
     }
-    // 分组标题上右键 → 改名 / 调顺序 / 删除
+    // 分组标题上右键 → 改名 / 调顺序 / 删除。「待整理」是虚拟分组，没这些可改
     const head = e.target.closest('.shelf-head[data-g]');
-    if (head) {
+    if (head && head.dataset.g !== '__loose') {
       e.preventDefault();
-      if (head.dataset.g !== '__loose') handlers.groupMenu?.(e, head.dataset.g);
+      handlers.groupMenu?.(e, head.dataset.g);
+      return;
     }
+    // 面板其它位置（顶部标题栏、空白处）右键：WebView 自带的菜单太长，
+    // 一律拦掉，只留一个「刷新」（= 重新扫描桌面）
+    e.preventDefault();
+    handlers.panelMenu?.(e);
   };
 
   // ---- 拖拽 ----
