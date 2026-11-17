@@ -47,7 +47,7 @@ export function openAbout(host, opts) {
       </div>
       <div class="ab-body">
         <div class="ab-row"><span>当前版本</span><b>v${esc(version)}</b></div>
-        <div class="ab-row"><span>更新源</span><a data-act="repo">github.com/fsdymy1024/fy-desktop</a></div>
+        <div class="ab-row"><span>更新源</span><a data-act="repo">https://github.com/fsdymy1024/fy-desktop</a></div>
         <div class="ab-row"><span>安装位置</span><a data-act="conf">打开配置与日志目录</a></div>
 
         <div class="ab-sec">
