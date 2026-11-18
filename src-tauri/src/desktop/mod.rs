@@ -665,6 +665,68 @@ pub fn open_url(url: &str) -> Result<(), String> {
     Err("仅支持 Windows".into())
 }
 
+/// ShellExecute 打开任意目标，返回原始返回值（> 32 才算成功）。
+///
+/// 返回值是 shell 的错误码，日志里能看到到底卡在哪一步：
+/// 2 找不到文件、5 拒绝访问、31 没有关联程序。
+#[cfg(windows)]
+fn shell_execute(target: &str) -> isize {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let op = HSTRING::from("open");
+    let file = HSTRING::from(target);
+    unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(op.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    }
+    .0 as isize
+}
+
+/// 打开 Windows 自带的对应界面（任务管理器 / 网络设置 / 时钟）。
+///
+/// `target` 必须是白名单里的常量：ShellExecute 连协议 URI 和可执行文件都能拉起来，
+/// 放开任意字符串就等于给前端留了一个「执行任意目标」的口子。
+pub fn open_system(target: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // 时钟给了两个候选：先试协议，再试 AppsFolder。Win10/Win11 的包名一致，
+        // 但 `ms-clock:` 在某些精简版系统上没有注册。
+        let cands: &[&str] = match target {
+            "taskmgr" => &["taskmgr.exe"],
+            "network" => &["ms-settings:network"],
+            "clock" => &[
+                "ms-clock:",
+                r"shell:AppsFolder\Microsoft.WindowsAlarms_8wekyb3d8bbwe!App",
+            ],
+            _ => return Err(format!("未知的系统入口：{target}")),
+        };
+
+        let mut last = 0isize;
+        for c in cands {
+            let code = shell_execute(c);
+            log_launch(&format!("open_system {target} → {c} = {code}"));
+            if code > 32 {
+                return Ok(());
+            }
+            last = code;
+        }
+        return Err(format!("打开失败（ShellExecute {last}）：{target}"));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = target;
+        Err("仅支持 Windows".into())
+    }
+}
+
 pub fn reveal_path(path: &str) -> Result<(), String> {
     #[cfg(windows)]
     {

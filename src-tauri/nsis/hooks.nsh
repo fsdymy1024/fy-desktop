@@ -13,4 +13,12 @@
     ; 刷新 shell 图标缓存（Windows 10/11 都认这个开关，失败也无害）
     ExecShell "" "ie4uinit.exe" "-show" SW_HIDE
   ${EndIf}
+
+  ; 应用内更新走 /S 静默安装：Tauri 的 NSIS 模板在静默模式下直接 Quit，
+  ; 「完成页」根本不会出现，也就没有完成页上的「运行」可勾——用户点完「安装」
+  ; 桌面上的组件就再也不回来了，得自己去开始菜单点一次。
+  ; 这里只在静默模式补一次启动：手动双击安装包时不抢完成页的勾选。
+  ${If} ${Silent}
+    Exec '"$INSTDIR\fy-desktop.exe"'
+  ${EndIf}
 !macroend

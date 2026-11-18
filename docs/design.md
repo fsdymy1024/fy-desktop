@@ -486,7 +486,7 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
 │ monitor.rs    系统与网络采样（1s 心跳，emit("metrics")）             │
 │ weather.rs    天气双源（15min，emit("weather")）                     │
 │ autostart.rs  开机自启（HKCU）                                       │
-│ tray.rs       托盘菜单（emit("tray:action")）                        │
+│ tray.rs       托盘菜单（emit("tray:open-menu")）                     │
 │ desktop/      扫描、移动、图标、抓屏                                 │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -509,11 +509,11 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
 | `create_group` / `rename_group` / `delete_group` | → | 分组增删改 |
 | `open_path` / `reveal_path` / `open_root` / `open_config_dir` | → | 打开、定位、开目录 |
 | `set_hit_regions` | → | 上报热区（物理像素） |
-| `glass_snapshot` | → | 抓屏并返回 base64 模糊底图 |
+| `glass_snapshot` | → | 抓屏，返回 1/3 降采样的 base64 底图（模糊由前端 CSS 做） |
 | `set_autostart` | → | 开关开机自启 |
 | `weather_now` / `weather_refresh` | → | 取缓存 / 主动刷新 |
 | `set_material` / `quit_app` / `dev_dump` | → | 材质、退出、诊断 |
-| `metrics` / `weather` / `tray:action` / `autostart:changed` / `tauri://drag-drop` | ← | 后端推送 |
+| `metrics` / `weather` / `tray:open-menu` / `autostart:changed` / `tauri://drag-drop` | ← | 后端推送 |
 | `hub:intent` / `hub:action` / `config:changed` / `desktop:changed` / `glass:update` | ← | 后端推送（窗口之间转发，见 4.3.6） |
 
 ### 6.2 配置

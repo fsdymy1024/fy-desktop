@@ -301,6 +301,13 @@ pub fn open_url(url: String) -> Result<(), String> {
     desktop::open_url(&url)
 }
 
+/// 打开 Windows 自带的对应界面：任务管理器 / 网络和 Internet / 时钟。
+/// 允许值由 desktop::open_system 的白名单决定，前端只传组件对应的常量。
+#[tauri::command]
+pub fn open_system(target: String) -> Result<(), String> {
+    desktop::open_system(&target)
+}
+
 #[tauri::command]
 pub fn open_root(state: State<'_, AppState>) -> Result<(), String> {
     let root = desktop::root_dir(&state.config());
@@ -533,7 +540,6 @@ pub fn set_hit_regions(state: State<'_, AppState>, rects: Vec<[f64; 4]>, force: 
 /// 传 null 表示菜单已收起，后台不再监听全局左键。
 #[tauri::command]
 pub fn set_menu_rect(state: State<'_, AppState>, rect: Option<[f64; 4]>) {
-    eprintln!("[menu] rect={rect:?}");
     let mut h = crate::state::lock(&state.hit);
     h.menu = rect;
     h.menu_armed = false;

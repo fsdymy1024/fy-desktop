@@ -105,22 +105,32 @@ button {
   isolation: isolate;
 }
 
-/* 真实桌面底图：后端模糊过的整屏截图，按卡片坐标裁切。
+/* 真实桌面底图：后端出的整屏降采样原图（未模糊），按卡片坐标裁切。
    白膜必须画在这一层的最上面（background-image 的第一层），不能靠 .surface 的
    background——元素的背景永远在伪元素之下，底图一铺就把白膜盖死了。
    以前就是这么写的：玻璃开起来等于直接把壁纸贴在卡片上，材质只剩边框差别，
-   文字还是深色，在深色壁纸上根本看不清。 */
+   文字还是深色，在深色壁纸上根本看不清。
+
+   模糊在这里做，不在后端做：`--glass-blur` 是个 CSS 变量，改模糊强度只是改
+   一个数值，不需要重新抓屏。半径按「底图被放大多少倍」由 JS 换算（见
+   main.js 的 applyShotBlur）。 */
 .surface::before {
   content: "";
   position: absolute;
-  inset: 0;
+  /* 比卡片大一圈：filter: blur 取不到边界外的像素，紧贴 inset:0 会让四周
+     渐隐发虚。外扩后由 .surface 的 overflow + 圆角在模糊**之后**裁切，
+     边缘才是干净的。多出来的部分被裁掉，所以光带/白膜观感不变。 */
+  inset: calc(-1 * var(--glass-blur, 39px));
   z-index: 0;
-  /* 三层：顶部镜面光带（最上）→ 白膜 → 模糊底图。
+  filter: blur(var(--glass-blur, 39px));
+  /* 三层：顶部镜面光带（最上）→ 白膜 → 底图。
      光带只盖住左上角一片，模拟玻璃顶面的反光（atrium highlight 0.8）。 */
   background-image: linear-gradient(168deg, var(--sheen-hi) 0%, var(--sheen-mid) 26%, rgba(255, 255, 255, 0) 46%),
     linear-gradient(var(--veil), var(--veil)), var(--shot, none);
-  background-size: 100% 100%, 100% 100%, var(--shot-w, 0) var(--shot-h, 0);
-  background-position: 0 0, 0 0, var(--shot-x, 0) var(--shot-y, 0);
+  background-size: 100% 100%, 100% 100%, var(--shot-w, 0px) var(--shot-h, 0px);
+  /* 底图必须跟着外扩量反向补偿，否则整张壁纸会往右下跑一整个 blur 半径 */
+  background-position: 0 0, 0 0,
+    calc(var(--shot-x, 0px) + var(--glass-blur, 39px)) calc(var(--shot-y, 0px) + var(--glass-blur, 39px));
   background-repeat: no-repeat, no-repeat, no-repeat;
   opacity: 0;
   transition: opacity 0.45s ease;
@@ -128,6 +138,11 @@ button {
 
 body[data-glass="1"] .surface::before {
   opacity: 1;
+}
+
+/* 没有底图（全石墨 / 抓屏失败）时不必跑一遍全屏模糊 */
+body[data-glass="0"] .surface::before {
+  filter: none;
 }
 
 /* 颗粒：让半透明读起来像雾面而不是塑料 */
@@ -150,6 +165,11 @@ body[data-glass="1"] .surface::before {
   padding: 12px 13px;
   display: flex;
   flex-direction: column;
+}
+
+/* 点一下能打开系统界面的卡片；编辑态的 cursor: grab 特异性更高，会覆盖它 */
+.card[data-opener="1"] {
+  cursor: pointer;
 }
 
 /* ---------- 通用小件 ---------- */
@@ -992,6 +1012,12 @@ body[data-glass="1"] .surface::before {
   max-height: calc(100% - 36px);
 }
 
+/* 面板被移除（设置里的 organizer.enabled=false）时要真的消失：
+   .panel 上写死了 display:flex，hidden 属性的 UA 样式压不过它。 */
+.panel[hidden] {
+  display: none;
+}
+
 .panel > .body {
   padding: 0;
   min-height: 0;
@@ -1807,6 +1833,19 @@ body[data-edit="1"] .grip {
   color: var(--pop-ink-hl, #b8461a);
 }
 
+/* 勾选列：和托盘菜单同一套——固定宽位，没勾时占位不显示，
+   这样每一行的文字起点都一样，不会因为有没有 ✓ 左右跳。 */
+#menu .mi-tick {
+  flex: 0 0 auto;
+  width: 13px;
+  font-size: 10px;
+  visibility: hidden;
+}
+
+#menu button[aria-checked='true'] .mi-tick {
+  visibility: visible;
+}
+
 #menu .sep {
   height: 1px;
   margin: 4px 6px;
@@ -2024,10 +2063,11 @@ body[data-material="dusk"],
 }
 
 /* 暮色的膜已经把底图压下去了，这里只降一点饱和度让颜色别抢字。
-   底图铺在 .surface::before 上：收纳面板看全局，卡片看自己的材质。 */
+   底图铺在 .surface::before 上：收纳面板看全局，卡片看自己的材质。
+   blur 必须跟着一起写：filter 是整体替换，只写 saturate 会把模糊干掉。 */
 body[data-material="dusk"] .panel::before,
 .card[data-material="dusk"]::before {
-  filter: saturate(0.7);
+  filter: blur(var(--glass-blur, 39px)) saturate(0.7);
 }
 
 body[data-material="dusk"] .panel,
@@ -2073,10 +2113,11 @@ body[data-tone="dark"][data-material="glass"] .panel {
   color: var(--ink);
 }
 
-/* 深模式下玻璃层铺的是真实底图——再压一点亮度，保持和深膜之间的层次 */
+/* 深模式下玻璃层铺的是真实底图——再压一点亮度，保持和深膜之间的层次。
+   同样必须带上 blur：这条规则比 .surface::before 更具体，漏掉就把模糊抵消了。 */
 body[data-tone="dark"] .card[data-material="glass"]::before,
 body[data-tone="dark"][data-material="glass"] .panel::before {
-  filter: brightness(0.82) saturate(0.88);
+  filter: blur(var(--glass-blur, 39px)) brightness(0.82) saturate(0.88);
 }
 
 .cell.empty {
@@ -2215,13 +2256,19 @@ body[data-material="solid"] .cell.empty .ic {
   border-color: rgba(255, 255, 255, 0.14);
 }
 
-#menu button[disabled] {
+/* 当前生效的那一项（尺寸 / 材质）：只做「已经选好了、点不动了」的弱化，
+   不跟随悬停变色。原来这里写死 rgba(26, 22, 19, 0.6) —— 玻璃 / 暮色 / 石墨
+   三套菜单底都是深色，一悬停整条就发黑，几乎看不见字。 */
+#menu button[disabled],
+#traymenu button[disabled] {
   cursor: default;
+  opacity: 0.55;
 }
 
-#menu button[disabled]:hover {
+#menu button[disabled]:hover,
+#traymenu button[disabled]:hover {
   background: none;
-  color: rgba(26, 22, 19, 0.6);
+  color: var(--pop-ink, rgba(26, 22, 19, 0.78));
 }
 
 /* ==========================================================================

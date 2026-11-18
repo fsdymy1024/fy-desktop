@@ -1,8 +1,10 @@
 //! 真毛玻璃的地基：抓一张「不含自己」的桌面底图。
 //!
 //! WebView2 的 `backdrop-filter` 在透明窗口上不会去模糊桌面（和 Electron 一样），
-//! 所以 v0.1 只能拿噪点假装磨砂。这里的做法是把桌面真实像素抓下来，
-//! 模糊后交给前端当每张卡片的背景 —— 卡片下面是什么，透出来的就是什么。
+//! 所以 v0.1 只能拿噪点假装磨砂。这里的做法是把桌面真实像素抓下来、降采样，
+//! 交给前端当每张卡片的背景 —— 卡片下面是什么，透出来的就是什么。
+//! 模糊本身在 CSS 里做（`--glass-blur`），不在这条抓屏链路上：这样调模糊强度
+//! 只是改一个变量，不必重新抓整屏。
 //!
 //! 「不含自己」靠 `WDA_EXCLUDEFROMCAPTURE` 实现：BitBlt 拍到的就是纯桌面，
 //! 不需要「隐藏窗口→截图→显示窗口」的闪烁。但它**只能抓底图的那一瞬间开**——
@@ -13,23 +15,79 @@
 use base64::Engine;
 
 #[cfg(windows)]
+use std::time::{Duration, Instant};
+
+#[cfg(windows)]
 use windows::Win32::Foundation::HWND;
+#[cfg(windows)]
+use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DWM_TIMING_INFO};
+#[cfg(windows)]
+use windows::Win32::System::Performance::QueryPerformanceCounter;
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SetWindowDisplayAffinity, SM_CXSCREEN, SM_CYSCREEN, WDA_EXCLUDEFROMCAPTURE,
     WDA_NONE,
 };
 
+/// 等 DWM 真的把当前这一帧合到屏幕上。
+///
+/// 「排除自己」只是改了窗口的展示亲和性，屏幕上还是旧帧，必须等下一次合成
+/// 才拍不到窗口。以前这里是 `sleep(150)` 盲等：不知道合成何时发生，只能给个
+/// 够大的数。`DwmGetCompositionTimingInfo` 直接暴露合成时钟 —— `qpcVBlank`
+/// 是最近一次垂直同步的 QPC 时间戳，`qpcRefreshPeriod` 是一帧的长度，
+/// 等到「vblank + frames 个周期」即可。60Hz 下 2 帧 ≈ 33ms，144Hz 下 < 15ms。
+///
+/// 拿不到计时信息（DWM 被禁用 / 兼容模式）时退化成一整段 sleep，行为与改动前
+/// 等价，只是略短。返回值仅用于调试输出：是否等满了目标帧数。
+#[cfg(windows)]
+fn wait_compose(frames: u32, timeout: Duration) -> bool {
+    let started = Instant::now();
+    let trace = |ok: bool| {
+        if std::env::var_os("FY_GLASS_TRACE").is_some() {
+            eprintln!("[glass] 等合成 {frames} 帧 → {:?} ok={ok}", started.elapsed());
+        }
+        ok
+    };
+
+    // hwnd 传空 = 查整机合成计时，和「窗口在哪个屏」无关
+    let mut info: DWM_TIMING_INFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<DWM_TIMING_INFO>() as u32;
+    if unsafe { DwmGetCompositionTimingInfo(HWND(std::ptr::null_mut()), &mut info) }.is_err()
+        || info.qpcRefreshPeriod == 0
+    {
+        std::thread::sleep(timeout);
+        return trace(false);
+    }
+
+    let deadline = info
+        .qpcVBlank
+        .saturating_add(info.qpcRefreshPeriod.saturating_mul(frames.max(1) as u64));
+
+    loop {
+        let mut now = 0i64;
+        let _ = unsafe { QueryPerformanceCounter(&mut now) };
+        if now > 0 && now as u64 >= deadline {
+            return trace(true);
+        }
+        if started.elapsed() >= timeout {
+            return trace(false);
+        }
+        // 1ms 一探：Windows 的 sleep 粒度受 timer resolution 影响，
+        // 最坏会被拉长到 ~15ms，所以超时留了余量，宁可多探几轮也不空转。
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// 抓底图前把自己从截图里排除，抓完立刻还原。
-/// 返回值是「这次有没有开排除」——调用方只在开过的情况下才需要关。
-/// 排除生效要等 DWM 合成一帧，所以开完睡一小拍再 BitBlt，
+/// 排除生效要等 DWM 合成一帧，所以开完等到下一帧再 BitBlt，
 /// 否则抓到的还是「窗口没被排除」的上一帧。
 #[cfg(windows)]
 fn exclude_for_grab(hwnd: isize) {
     unsafe {
         let _ = SetWindowDisplayAffinity(HWND(hwnd as *mut _), WDA_EXCLUDEFROMCAPTURE);
     }
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    // 2 帧：亲和性变更到合成表面刷新之间隔着一次队列，1 帧容易擦边
+    wait_compose(2, Duration::from_millis(120));
 }
 
 /// 还原为「任何截图工具都能拍到窗口」的默认状态。
@@ -153,11 +211,17 @@ fn grab_screen(scale_down: u32, sigma: f32, raw: bool) -> Result<Vec<u8>, String
             (h as u32 / scale_down).max(1),
             image::imageops::FilterType::Triangle,
         );
-        // 降采样后再模糊：4K 上一步到位会慢好几倍，视觉结果几乎一样
-        let blurred = image::imageops::blur(&small, sigma);
+        // 降采样后再模糊：4K 上一步到位会慢好几倍，视觉结果几乎一样。
+        // sigma = 0 表示不在这里模糊 —— 模糊交给前端的 CSS filter，
+        // 这样「模糊强度」变成可调参数，改它不需要重新抓整屏。
+        let out = if sigma > 0.0 {
+            image::imageops::blur(&small, sigma)
+        } else {
+            small
+        };
 
         let mut png = Vec::new();
-        image::DynamicImage::ImageRgba8(blurred)
+        image::DynamicImage::ImageRgba8(out)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .map_err(|e| format!("编码 PNG 失败: {e}"))?;
         Ok(png)
@@ -168,13 +232,17 @@ fn grab_screen(scale_down: u32, sigma: f32, raw: bool) -> Result<Vec<u8>, String
 ///
 /// `include_window = true` 用于自检截图（要看见窗口本身）：窗口默认就对截图
 /// 可见，什么都不用切。`include_window = false` 才是给玻璃底图用的：
-/// 瞬时排除自己 → BitBlt → 立刻还原，全程只有 ~100ms。
+/// 瞬时排除自己 → BitBlt → 立刻还原，等合成帧而不是盲等。
+///
+/// 只出 1/3 降采样、**未模糊**的原图：模糊由前端 CSS `filter: blur()` 完成。
+/// 这样模糊半径是一个 CSS 变量，调它不产生任何抓屏成本；也意味着底图 PNG
+/// 的熵比模糊版高、体积更大，这是这一层取舍的代价。
 #[cfg(windows)]
 pub fn snapshot(hwnd: isize, include_window: bool) -> Result<String, String> {
     if !include_window {
         exclude_for_grab(hwnd);
     }
-    let result = grab_screen(3, 13.0, false);
+    let result = grab_screen(3, 0.0, false);
     if !include_window {
         include_back(hwnd);
     }

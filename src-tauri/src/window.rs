@@ -60,12 +60,18 @@ pub fn spawn_hit_guard(app: AppHandle) {
             let mut menu_outside = false;
             let (regions, force) = {
                 let mut h = crate::state::lock(&state.hit);
-                // 托盘菜单开着时盯全局左键：点在菜单外就通知前端收起。
-                // 点别的应用 / 任务栏时我们窗口收不到任何事件，前端全靠这一手。
+                // 自绘菜单（卡片右键菜单 / 托盘菜单）开着时盯全局按键：点在菜单外就通知前端收起。
+                // 点别的应用 / 任务栏 / 桌面空白时我们窗口收不到任何事件，前端全靠这一手。
+                // 左右键都算：右键点菜单外面那一刻，桌面自己的右键菜单会同时弹出来，
+                // 我们的菜单得让位（与 Windows 上其它软件的菜单行为一致）。
                 #[cfg(windows)]
                 if let Some((x, y)) = cursor {
-                    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-                    let down = (unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000) != 0;
+                    use windows::Win32::UI::Input::KeyboardAndMouse::{
+                        GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+                    };
+                    let lb = (unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000) != 0;
+                    let rb = (unsafe { GetAsyncKeyState(VK_RBUTTON.0 as i32) } as u16 & 0x8000) != 0;
+                    let down = lb || rb;
                     if let Some(rect) = h.menu {
                         let outside =
                             !(x >= rect[0] && x <= rect[2] && y >= rect[1] && y <= rect[3]);

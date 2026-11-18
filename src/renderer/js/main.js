@@ -33,6 +33,20 @@ const S = {
 const GRID = GAP;
 const SNAP_TOL = 6;
 
+/** 点一下就打开 Windows 自带的对应界面。没列出的组件点了不做事。
+ *  值是后端 open_system 的白名单键，前端不拼命令行。 */
+const SYSTEM_TARGETS = {
+  system: 'taskmgr',
+  network: 'network',
+  clock: 'clock',
+  digital: 'clock'
+};
+const SYSTEM_TARGET_LABEL = {
+  taskmgr: '任务管理器',
+  network: '网络和 Internet 设置',
+  clock: '时钟'
+};
+
 /* ============================ 启动 ============================ */
 
 // 截图模式下把未捕获异常记下来，随 dump 一起落盘
@@ -116,6 +130,8 @@ function layoutStage() {
   stage.style.transform = `scale(${S.scale})`;
   document.documentElement.style.setProperty('--shot-w', `${S.design.w}px`);
   document.documentElement.style.setProperty('--shot-h', `${S.design.h}px`);
+  // 缩放档位变了，底图被放大的倍数跟着变，模糊半径要重算
+  applyShotBlur();
 }
 
 function applyMaterial() {
@@ -146,7 +162,8 @@ function setGlobalMaterial(mat) {
   applyMaterial();
   syncCardMaterials();
   save();
-  loadGlass();
+  // 只切材质不是换壁纸：底图还在就直接用，不必再整屏抓一次
+  ensureGlass();
 }
 
 /* ============================ 组件 ============================ */
@@ -325,6 +342,28 @@ function bindCard(el, w) {
   if (w.kind === 'weather') {
     el.addEventListener('dblclick', () => openHub('settings', { type: 'weather', compact: true }));
   }
+
+  // 单击系统监视 / 网络 / 时钟：打开 Windows 自带的对应界面。
+  // 编辑态不触发（那时点击是拖动），卡片里的输入控件也不劫持。
+  const sysTarget = SYSTEM_TARGETS[w.kind];
+  if (sysTarget) {
+    el.dataset.opener = '1';
+    el.title = `点击打开${SYSTEM_TARGET_LABEL[sysTarget] || '系统界面'}`;
+    const openSys = () =>
+      invoke('open_system', { target: sysTarget }).catch((err) =>
+        toast(`打开${SYSTEM_TARGET_LABEL[sysTarget] || '系统界面'}失败：${err?.message || err}`)
+      );
+    el.addEventListener('click', (e) => {
+      if (S.edit) return;
+      if (e.target.closest('textarea, input, button, select, a, [contenteditable="true"]')) return;
+      openSys();
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || S.edit) return;
+      e.preventDefault();
+      openSys();
+    });
+  }
 }
 
 /** 组件右键菜单 */
@@ -336,8 +375,9 @@ function openCardMenu(el, w, x, y) {
   for (const k of sizesOf(w.kind)) {
     const [sw, sh] = dimsOf(k);
     items.push({
-      label: `${k === cur ? '✓' : '　'} ${SIZE_LABEL[k]}　${sw}×${sh}`,
+      label: `${SIZE_LABEL[k]}　${sw}×${sh}`,
       disabled: k === cur,
+      checked: k === cur,
       act: () => setCardSize(el, w, k)
     });
   }
@@ -348,8 +388,9 @@ function openCardMenu(el, w, x, y) {
   items.push({ head: true, label: `材质 · ${{ glass: '玻璃', dusk: '暮色', solid: '石墨' }[curMat] || curMat}` });
   for (const [k, label] of [['glass', '玻璃'], ['dusk', '暮色'], ['solid', '石墨']]) {
     items.push({
-      label: `${k === curMat ? '✓' : '　'} ${label}`,
+      label,
       disabled: k === curMat,
+      checked: k === curMat,
       act: () => setCardMaterial(el, w, k)
     });
   }
@@ -446,8 +487,9 @@ function hideGuides() {
 }
 
 /** 其它卡片与收纳面板的参考线。kind 说明这是卡的哪条边，
- *  吸附时要靠它判断「往邻卡后面接」还是「同向对齐」。 */
-function refLines(exceptId) {
+ *  吸附时要靠它判断「往邻卡后面接」还是「同向对齐」。
+ *  拖收纳面板自己时传 withOrg = false：否则面板会去贴它自己的三条边，动不了。 */
+function refLines(exceptId, withOrg = true) {
   const xs = [];
   const ys = [];
   for (const o of S.cfg.widgets) {
@@ -456,7 +498,7 @@ function refLines(exceptId) {
     ys.push({ v: o.y, kind: 'top' }, { v: o.y + o.h / 2, kind: 'center' }, { v: o.y + o.h, kind: 'bottom' });
   }
   const org = S.cfg.organizer;
-  if (org) {
+  if (withOrg && org && org.enabled !== false) {
     xs.push({ v: org.x, kind: 'left' }, { v: org.x + org.w / 2, kind: 'center' }, { v: org.x + org.w, kind: 'right' });
     ys.push({ v: org.y, kind: 'top' });
   }
@@ -568,7 +610,10 @@ function freeSpot(w, h) {
   // pad 与步进都取 GAP 的整数倍，扫出来的坐标才能和已有卡片的边缘对齐，
   // 缝隙才会是 GAP 而不是 4px、12px 这种歪数。
   const pad = 4 * GRID;
-  const limitX = Math.max(pad + w, (S.cfg.organizer?.x ?? S.design.w) - 20);
+  // 收纳面板还在时，新卡片不越过它的左边缘；面板被移除后整屏都是可用区
+  const org = S.cfg.organizer;
+  const orgEdge = org && org.enabled !== false ? org.x : S.design.w;
+  const limitX = Math.max(pad + w, orgEdge - 20);
   const boxes = S.cfg.widgets.map((o) => ({ x: o.x, y: o.y, w: o.w, h: o.h }));
   const clash = (a) =>
     boxes.some((b) => a.x < b.x + b.w + GAP && a.x + a.w + GAP > b.x && a.y < b.y + b.h + GAP && a.y + a.h + GAP > b.y);
@@ -597,6 +642,15 @@ async function refreshDesktop() {
 function renderPanel() {
   const el = $('#organizer');
   const o = S.cfg.organizer;
+
+  // 面板被移除（organizer.enabled = false）：整块藏起来，不画热区、不参与拖放命中。
+  // 内容留着不清，从控制中心加回来时直接显形，chrome 监听也不用重新绑。
+  if (o && o.enabled === false) {
+    el.hidden = true;
+    scheduleHit();
+    return;
+  }
+  el.hidden = false;
   el.className = 'panel surface';
   el.style.left = `${o.x}px`;
   el.style.top = `${o.y}px`;
@@ -611,6 +665,25 @@ function renderPanel() {
   attachPanelChrome(el);
   paintShotVars();
   scheduleHit();
+}
+
+/** 桌面收纳面板的显示开关：只关显示，分组与磁盘上的文件原样保留。
+ *  控制中心「分组」页那个开关也是通过 hub_action 走到这里，所以不加 toast ——
+ *  用户看的是控制中心，桌面上再飘一条反而碍事。 */
+function setOrganizer(on) {
+  const o = S.cfg.organizer;
+  if (!o || (o.enabled !== false) === !!on) return;
+  o.enabled = !!on;
+  renderPanel();
+  save();
+}
+
+/** 面板右键「移除桌面收纳」：这一步发生在桌面上，给一条反馈。 */
+function removeOrganizer() {
+  const o = S.cfg.organizer;
+  if (!o || o.enabled === false) return;
+  setOrganizer(false);
+  toast('已移除桌面收纳，可在控制中心「分组」页加回来');
 }
 
 /** 打开类动作失败必须说话。
@@ -660,8 +733,9 @@ const handlers = {
     items.push({ head: true, label: `材质 · ${{ glass: '玻璃', dusk: '暮色', solid: '石墨' }[curMat] || curMat}` });
     for (const [k, label] of [['glass', '玻璃'], ['dusk', '暮色'], ['solid', '石墨']]) {
       items.push({
-        label: `${k === curMat ? '✓' : '　'} ${label}`,
+        label,
         disabled: k === curMat,
+        checked: k === curMat,
         act: () => setGlobalMaterial(k)
       });
     }
@@ -671,6 +745,9 @@ const handlers = {
     items.push({ label: '新建分组…', act: () => handlers.addGroup() });
     items.push({ label: '在资源管理器中打开', act: () => handlers.openRoot() });
     items.push({ label: '刷新', act: () => handlers.refresh() });
+    // 移除只关掉这块面板，分组和文件原样留在磁盘上，随时能从控制中心加回来
+    items.push({ sep: true });
+    items.push({ label: '移除桌面收纳', act: () => removeOrganizer() });
 
     showMenu({ x: e.clientX, y: e.clientY }, items);
   },
@@ -817,9 +894,9 @@ function attachPanelChrome(el) {
     const origin = { w: o.w, h: o.h || el.offsetHeight };
     S.force = true;
     const onMove = (ev) => {
-      o.w = Math.round(clamp(origin.w + (ev.clientX - sx) / S.scale, 320, S.design.w - o.x));
-      o.h = Math.round(clamp(origin.h + (ev.clientY - sy) / S.scale, 260, S.design.h - o.y));
-      el.style.height = `${o.h}px`;
+      // 宽高也落 6px 网格：面板边缘才能和卡片边缘落在同一条线上
+      o.w = onGrid(clamp(origin.w + (ev.clientX - sx) / S.scale, 320, S.design.w - o.x));
+      o.h = onGrid(clamp(origin.h + (ev.clientY - sy) / S.scale, 260, S.design.h - o.y));
       el.style.width = `${o.w}px`;
       el.style.height = `${o.h}px`;
     };
@@ -842,10 +919,19 @@ function attachPanelChrome(el) {
     const sx = e.clientX;
     const sy = e.clientY;
     const origin = { x: o.x, y: o.y };
+    // h=0 表示高度跟内容走，此时配置里没有真实高度，得读一次布局
+    const oh = o.h || el.offsetHeight || 0;
+    // 和卡片同一套吸附：先贴邻卡的边（含其它卡片），贴不上再落 6px 网格
+    const { xs, ys } = refLines(null, false);
     S.force = true;
     const onMove = (ev) => {
-      o.x = Math.round(clamp(origin.x + (ev.clientX - sx) / S.scale, 0, S.design.w - o.w));
-      o.y = Math.round(clamp(origin.y + (ev.clientY - sy) / S.scale, 0, S.design.h - o.h));
+      const nx = clamp(origin.x + (ev.clientX - sx) / S.scale, 0, S.design.w - o.w);
+      const ny = clamp(origin.y + (ev.clientY - sy) / S.scale, 0, S.design.h - oh);
+      const hitX = snapStart(nx, o.w, xs);
+      const hitY = snapStart(ny, oh, ys);
+      o.x = Math.round(hitX ? clamp(hitX.pos, 0, S.design.w - o.w) : onGrid(nx));
+      o.y = Math.round(hitY ? clamp(hitY.pos, 0, S.design.h - oh) : onGrid(ny));
+      showGuides(hitX?.line ?? null, hitY?.line ?? null);
       el.style.left = `${o.x}px`;
       el.style.top = `${o.y}px`;
       el.style.setProperty('--shot-x', `${-o.x}px`);
@@ -854,6 +940,7 @@ function attachPanelChrome(el) {
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      hideGuides();
       S.force = false;
       save();
       scheduleHit();
@@ -865,10 +952,42 @@ function attachPanelChrome(el) {
 
 /* ============================ 毛玻璃 ============================ */
 
+/** 后端出的底图是多大幅度的降采样原图，模糊就按图上多少像素算。
+ *  这两个值必须和 glass.rs 里 snapshot 的 grab_screen(3, ...) 对上：
+ *  图上 sigma 13 的特征尺度，放大 k 倍落到舞台上就是 13k 个 design px。 */
+const SHOT_SIGMA = 13;
+let shotImgW = 0;
+let shotSrc = '';
+
+/** 把「1/3 降采样图上的 sigma」换算成当前舞台坐标系的 CSS blur 半径。
+ *  换缩放档位（S.scale 变）或换 DPI 时底图会被放大不同倍数，写死 39px
+ *  在 200% 缩放的屏上会糊得过头，所以每次都要按图宽重算。 */
+function applyShotBlur() {
+  if (!shotImgW) return; // 图还没量出来，先用 CSS 的兜底值
+  const k = (S.design.w || shotImgW) / shotImgW;
+  document.documentElement.style.setProperty('--glass-blur', `${(SHOT_SIGMA * k).toFixed(1)}px`);
+}
+
+/** 量一次底图的像素宽。只在底图本身换了才重新解码，切材质/挪卡片不碰它。 */
+function measureShot() {
+  if (shotSrc === S.shot) {
+    applyShotBlur();
+    return;
+  }
+  const img = new Image();
+  img.onload = () => {
+    shotSrc = S.shot;
+    shotImgW = img.naturalWidth || 0;
+    applyShotBlur();
+  };
+  img.src = S.shot;
+}
+
 function paintShotVars() {
   if (!S.shot) return;
   document.documentElement.style.setProperty('--shot', `url("${S.shot}")`);
   document.body.dataset.glass = '1';
+  measureShot();
   scheduleTone();
 }
 
@@ -882,6 +1001,29 @@ function needsShot() {
     const m = w.material || S.cfg.material;
     return m === 'glass' || m === 'dusk';
   });
+}
+
+/**
+ * 需要底图时保证 S.shot 可用。
+ *
+ * 切材质 ≠ 换壁纸。以前 setGlobalMaterial 里是直接 loadGlass()，每点一次材质就
+ * 走一次 glass_snapshot：排除窗口 → 整屏抓图 → 编码成 data URL，4K 上足够让
+ * 控制中心卡上小半秒（玻璃卡上还会看到一次闪）。底图没变就把已有那张贴回去，
+ * 真正需要重抓的只有启动那一刻和「刷新桌面底图」。
+ */
+function ensureGlass() {
+  if (!needsShot()) {
+    document.body.dataset.glass = '0';
+    toneImage = null;
+    document.body.dataset.tone = '';
+    return;
+  }
+  if (S.shot) {
+    document.body.dataset.glass = '1';
+    paintShotVars();
+    return;
+  }
+  loadGlass();
 }
 
 async function loadGlass() {
@@ -982,7 +1124,10 @@ function updateHit() {
   const trayMenu = $('#traymenu');
   if (trayMenu && !trayMenu.hidden) push(trayMenu.firstElementChild || trayMenu);
 
-  const force = S.edit || S.force || S.trayMenu || (menu && !menu.hidden);
+  // 右键菜单不开「整窗接管」：它只是热区之一。菜单外的空白要能穿透回桌面，
+  // 这样在空白处点右键，桌面自己的菜单会照常弹出来（和别的桌面软件一致），
+  // 我们的菜单则靠后端的「菜单外点击」检测收起（见 set_menu_rect）。
+  const force = S.edit || S.force || S.trayMenu;
   invoke('set_hit_regions', { rects, force: !!force }).catch(() => {});
 }
 
@@ -1066,6 +1211,9 @@ function handleHubAction(a) {
       break;
     case 'edit-layout':
       startLayout();
+      break;
+    case 'set-organizer':
+      setOrganizer(!!a.on);
       break;
     default:
       console.warn('[fy] 未知的控制中心操作', a);
@@ -1155,16 +1303,23 @@ function promptInput() {
 function menuAnchor() {
   const el = $('#organizer');
   const r = el.getBoundingClientRect();
+  // 面板被移除时 rect 全是 0，退到屏幕中间，别把菜单挤到左上角外面
+  if (r.width < 3) return { x: window.innerWidth / 2 - 80, y: window.innerHeight / 2 - 40 };
   return { x: r.right - 160, y: r.bottom - 40 };
 }
 
 function showMenu(anchor, items) {
   const menu = $('#menu');
+  // 勾选列与托盘菜单一致：固定宽位的 tick，没勾时占位隐藏，
+  // 不再靠 label 前面的「✓ / 全角空格」对齐（那样每行文字起点会跳）。
+  const tick = '<span class="mi-tick" aria-hidden="true">✓</span>';
   menu.innerHTML = items
-    .map((it) => {
+    .map((it, i) => {
       if (it.sep) return '<div class="sep"></div>';
       if (it.head) return `<div class="lab">${escapeHtml(it.label)}</div>`;
-      return `<button data-i="${items.indexOf(it)}" ${it.disabled ? 'disabled style="opacity:.5"' : ''}>${escapeHtml(it.label)}</button>`;
+      const dis = it.disabled ? ' disabled' : '';
+      const on = it.checked ? ' aria-checked="true"' : '';
+      return `<button data-i="${i}"${dis}${on}>${tick}${escapeHtml(it.label)}</button>`;
     })
     .join('');
   menu.hidden = false;
@@ -1182,10 +1337,32 @@ function showMenu(anchor, items) {
     if (item?.act) await item.act();
   };
   updateHit();
+  syncCardMenuRect();
+}
+
+/** 把卡片右键菜单的矩形报给后端。
+ *
+ *  菜单外的那一下点击（左键或右键）落在窗口之外，前端根本收不到，
+ *  所以「点外面收起菜单」由后端的 hit guard 轮询全局按键判定（menu:outside）。
+ *  菜单本身只是热区，不开整窗接管——空白处才能穿透回桌面。 */
+function syncCardMenuRect() {
+  const menu = $('#menu');
+  if (!menu || menu.hidden) {
+    invoke('set_menu_rect', { rect: null }).catch(() => {});
+    return;
+  }
+  const r = menu.getBoundingClientRect();
+  const d = dpr();
+  invoke('set_menu_rect', {
+    rect: [r.left * d, r.top * d, r.right * d, r.bottom * d]
+  }).catch(() => {});
 }
 
 function hideMenu() {
-  $('#menu').hidden = true;
+  const menu = $('#menu');
+  if (menu.hidden) return;
+  menu.hidden = true;
+  invoke('set_menu_rect', { rect: null }).catch(() => {});
   updateHit();
 }
 
@@ -1227,9 +1404,20 @@ function bindGlobalEvents() {
     }
   });
 
-  // 右键空白处关闭菜单
+  // 点菜单外面 = 关菜单。点在窗口之外（桌面空白、别的应用）时页面收不到这个
+  // pointerdown，那一路由后端的 menu:outside 兜底。
   document.addEventListener('pointerdown', (e) => {
-    if (!$('#menu').hidden && !e.target.closest('#menu')) hideMenu();
+    if ($('#menu').hidden) return;
+    if (e.target.closest('#menu')) return;
+    hideMenu();
+  });
+
+  // 兜底：桌面层里没有需要「系统右键菜单」的地方。卡片、收纳面板、自绘菜单
+  // 各自的处理器都会先 preventDefault；走到这里的只剩「窗口正好接管鼠标时的空白处」
+  // （菜单开着、编辑态、拖拽中），这一下右键不该冒出 WebView 的默认菜单。
+  // 平时窗口是穿透的，空白处的右键根本到不了页面，Windows 桌面菜单照旧。
+  document.addEventListener('contextmenu', (e) => {
+    if (!e.defaultPrevented) e.preventDefault();
   });
 
   window.addEventListener('resize', () => {
@@ -1271,16 +1459,6 @@ function bindGlobalEvents() {
     if (!e.payload) return;
     S.shot = e.payload;
     paintShotVars();
-  });
-
-  listen('tray:action', (e) => {
-    if (e.payload === 'gallery') openGal();
-    if (e.payload === 'about') openAboutPanel();
-    if (e.payload === 'edit') setEdit(!S.edit);
-    if (e.payload === 'place') pickPlace();
-    if (e.payload === 'glass') {
-      loadGlass();
-    }
   });
 
   // ---- 托盘自绘菜单 ----
@@ -1336,17 +1514,17 @@ function bindGlobalEvents() {
   function openTrayMenu(rect) {
     closeTrayMenu();
     const tick = '<span class="tm-tick" aria-hidden="true">✓</span>';
+    // 添加组件 / 刷新底图 / 天气地区 / 关于都已经是控制中心里的页面，
+    // 菜单不再各留一个入口，只在第一行给一个「控制中心」。
     trayHost.innerHTML = `<div class="tm" role="menu">
-      <button class="tm-item" data-act="gallery" role="menuitem">${tick}添加组件…</button>
-      <button class="tm-item" data-act="glass" role="menuitem">${tick}刷新桌面底图</button>
-      <button class="tm-item" data-act="place" role="menuitem">${tick}天气地区…</button>
+      <button class="tm-item" data-act="hub" role="menuitem">${tick}控制中心</button>
+      <div class="tm-sep"></div>
       <button class="tm-item check" data-act="autostart" aria-checked="${!!S.cfg.autostart}" role="menuitemcheckbox">${tick}开机自启</button>
       <button class="tm-item check" data-act="seconds" aria-checked="${S.cfg.show_seconds !== false}" role="menuitemcheckbox">${tick}时钟显示秒</button>
       <div class="tm-sep"></div>
       <button class="tm-item" data-act="root" role="menuitem">${tick}打开收纳文件夹</button>
       <button class="tm-item" data-act="conf" role="menuitem">${tick}设置文件…</button>
       <div class="tm-sep"></div>
-      <button class="tm-item" data-act="about" role="menuitem">${tick}关于 fy-desktop…</button>
       <button class="tm-item danger" data-act="quit" role="menuitem">${tick}退出 fy-desktop</button>
     </div>`;
 
@@ -1389,7 +1567,11 @@ function bindGlobalEvents() {
       .catch(() => {});
   }
 
-  listen('menu:outside', () => closeTrayMenu());
+  listen('menu:outside', () => {
+    // 卡片右键菜单与托盘菜单共用一个后端矩形槽位，两个都收一下
+    if (!$('#menu').hidden) hideMenu();
+    closeTrayMenu();
+  }).catch(() => {});
 
   // 调试：FY_UI=traymenu 直接弹出托盘菜单，再点一下菜单外面，
   // 验证「点其它地方收回」。结果写进 S.trayProbe。
@@ -1420,21 +1602,11 @@ function bindGlobalEvents() {
     if (!btn) return;
     const act = btn.dataset.act;
     switch (act) {
-      case 'gallery':
+      case 'hub':
+        // view 传 null：沿用控制中心上次停留的页面，冷启动时走默认页。
+        // 不能用 toggle_hub —— 菜单点了就是要「打开」，不该把已开的窗口收起来。
         closeTrayMenu();
-        openGal();
-        break;
-      case 'glass':
-        closeTrayMenu();
-        loadGlass();
-        break;
-      case 'place':
-        closeTrayMenu();
-        pickPlace();
-        break;
-      case 'about':
-        closeTrayMenu();
-        openAboutPanel();
+        openHub(null);
         break;
       case 'root':
         closeTrayMenu();

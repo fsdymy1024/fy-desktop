@@ -89,6 +89,10 @@ pub struct OrganizerCfg {
     /// 收纳根目录。空 = 桌面下的 fy-desktop 文件夹
     #[serde(default)]
     pub root: String,
+    /// 桌面上是否显示收纳面板。false = 在面板右键菜单里「移除」了它，
+    /// 从控制中心「分组」页再加回来（配置本身保留，分组和文件都不动）
+    #[serde(default = "d_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,6 +209,7 @@ impl Config {
                 groups,
                 folded: vec!["archive".into()],
                 root: String::new(),
+                enabled: true,
             },
             weather: d_weather(),
             // 桌面小组件装完就该跟着系统起来，默认开；托盘里随时能关。

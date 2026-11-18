@@ -82,9 +82,9 @@ async function boot() {
 /**
  * 界面缩放。
  *
- * 设计稿固定 960×660，窗口逻辑尺寸 = 960×660 × ui，内容用 transform 同步放大。
- * 4K 屏上 1:1 画字会小得离谱，但放到 2 倍窗口就吃掉半屏（3840×2160 上 1920×1320），
- * 所以按 2880 起算、上限 1.5：4K 上落在 1.33（窗口 1280×880），1080p 上就是 1:1。
+ * 设计稿固定 900×620，窗口逻辑尺寸 = 900×620 × ui，内容用 transform 同步放大。
+ * 4K 屏上 1:1 画字会小得离谱，但放到 2 倍窗口就吃掉半屏（3840×2160 上 1800×1240），
+ * 所以按 2880 起算、上限 1.5：4K 上落在 1.33（窗口 1200×825），1080p 上就是 1:1。
  */
 const UI_MAX = 1.5;
 
@@ -101,8 +101,9 @@ function restorePosition() {
   const dpr = window.devicePixelRatio || 1;
   const ui = applyUi();
 
-  const W = 960 * ui;
-  const Hh = 660 * ui;
+  // 设计稿 900×620（见 hub.css 的 .app），两边必须一致
+  const W = 900 * ui;
+  const Hh = 620 * ui;
   const DPI = window.__TAURI__?.dpi;
   if (!DPI) return;
 
@@ -186,6 +187,21 @@ function renderAll() {
   renderGroups();
   renderAbout();
   renderSide();
+}
+
+/** 判断「要不要整窗重绘」用的配置指纹。
+ *  材质刻意不在里面——它只是换一组 CSS 变量，换不着重建 DOM。 */
+function cfgSig(c) {
+  return JSON.stringify([
+    c?.widgets,
+    c?.organizer?.groups,
+    c?.organizer?.enabled,
+    c?.organizer?.root,
+    c?.show_labels,
+    c?.show_seconds,
+    c?.scale,
+    c?.weather
+  ]);
 }
 
 function renderNav() {
@@ -319,7 +335,8 @@ function renderSwitches() {
     autostart: H.autostart,
     auto_update: H.cfg.auto_update !== false,
     show_labels: H.cfg.show_labels !== false,
-    show_seconds: H.cfg.show_seconds !== false
+    show_seconds: H.cfg.show_seconds !== false,
+    organizer: H.cfg.organizer?.enabled !== false
   };
   $$('[data-switch]').forEach((el) => {
     const key = el.dataset.switch;
@@ -356,6 +373,7 @@ function renderSettings() {
 function renderGroups() {
   const list = $('#grouplist');
   if (!list) return;
+
   const groups = H.cfg.organizer?.groups || [];
   const counts = new Map((H.viewData?.groups || []).map((g) => [g.id, g.items?.length || 0]));
   const folder = new Map((H.viewData?.groups || []).map((g) => [g.id, g.folder]));
@@ -508,10 +526,20 @@ function bindEvents() {
 
   listen('hub:intent', (e) => handleIntent(e.payload));
   listen('config:changed', (e) => {
-    if (!e.payload) return;
-    H.cfg = e.payload;
-    H.autostart = e.payload.autostart ?? H.autostart;
+    const p = e.payload;
+    if (!p) return;
+    const before = cfgSig(H.cfg);
+    const matBefore = H.cfg?.material;
+    H.cfg = p;
+    H.autostart = p.autostart ?? H.autostart;
     applyMaterial();
+    // 这条事件多半是「我们自己刚发出去的操作，桌面执行完又广播回来」。
+    // 结构没变就只同步颜色和开关：否则每点一次开关/材质都重绘整个窗口。
+    if (before === cfgSig(p)) {
+      if (matBefore !== p.material) renderMaterialRows();
+      renderSwitches();
+      return;
+    }
     renderAll();
   });
   // 后端命令改完分组/文件后会推 desktop:changed 给桌面窗口；控制中心自己再拉一次
@@ -557,8 +585,10 @@ function editLayout() {
 function setMaterial(mat) {
   if (!MATERIAL_KEYS.includes(mat) || mat === H.cfg.material) return;
   H.cfg.material = mat;
+  // 换材质只是换一组 CSS 变量。整窗重绘（五个页面 + 21 张预览卡 + 分组列表）
+  // 除了让点击迟滞一下没有别的收益，这里只刷材质行自己的选中态。
   applyMaterial();
-  renderAll();
+  renderMaterialRows();
   send({ type: 'set-material', material: mat });
 }
 
@@ -608,6 +638,16 @@ async function toggleSwitch(key) {
     renderWidgets();
     renderSwitches();
     send({ type: 'set-seconds', on: H.cfg.show_seconds });
+    return;
+  }
+  // 桌面收纳面板的显示开关：只影响面板显不显示，分组与磁盘文件都不动
+  if (key === 'organizer') {
+    if (!H.cfg.organizer) return;
+    const want = H.cfg.organizer.enabled === false;
+    H.cfg.organizer.enabled = want;
+    renderSwitches();
+    send({ type: 'set-organizer', on: want });
+    toast(want ? '桌面已显示收纳面板' : '桌面收纳已移除，分组和文件都还在');
   }
 }
 

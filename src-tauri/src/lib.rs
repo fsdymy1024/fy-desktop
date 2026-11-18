@@ -79,6 +79,7 @@ pub fn run() {
             commands::open_root,
             commands::open_config_dir,
             commands::open_url,
+            commands::open_system,
             commands::move_into,
             commands::move_out,
             commands::tidy_preview,
