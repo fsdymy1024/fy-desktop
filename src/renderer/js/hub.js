@@ -427,6 +427,16 @@ function bindEvents() {
     appWindow?.startDragging?.();
   });
 
+  // 紧凑模式下标题栏被藏起来了，窗口里只剩一个弹窗，所以它的标题行就是抓手。
+  // 拖弹窗 = 拖窗口（弹窗居中于窗口，视觉上跟着鼠标走）。
+  // 主界面里的弹窗不启用：那里拖一下会把整个 900×620 的窗口带跑。
+  document.addEventListener('mousedown', (e) => {
+    if (!compact || e.button !== 0) return;
+    if (!e.target.closest?.('.dlg-head')) return;
+    if (e.target.closest('button')) return;
+    appWindow?.startDragging?.();
+  });
+
   $('#btn-min').onclick = () => appWindow?.minimize?.();
   $('#btn-close').onclick = () => hideHub();
   $('#btn-quit').onclick = () => invoke('quit_app');
@@ -665,7 +675,10 @@ async function moveGroup(id, delta) {
  * 通用弹层。onOk 返回 false 表示「不关闭」（表单校验失败时用）。
  */
 function openDialog(opts) {
-  closeDialog();
+  // 换弹窗 ≠ 关弹窗：拆掉旧的那个时不能让它把窗口一起收起来。
+  // 走 closeDialog() 会在紧凑模式下调 hide_hub，于是从「天气地区」点开
+  // 「新建分组」时整个窗口直接消失，看起来就是闪退。
+  H.dialog?.close(null, false);
   const layer = $('#dialog');
   layer.hidden = false;
   layer.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-label="${esc(opts.title)}">
@@ -687,13 +700,14 @@ function openDialog(opts) {
 
   const box = layer.querySelector('.dlg');
 
-  const close = (v) => {
+  const close = (v, hideWindow = true) => {
     layer.hidden = true;
     layer.innerHTML = '';
     layer.onmousedown = null;
     H.dialog = null;
-    // 紧凑模式下弹窗就是窗口的全部内容，关掉它窗口也该收起来
-    if (compact) exitCompact();
+    // 紧凑模式下弹窗就是窗口的全部内容，关掉它窗口也该收起来。
+    // 但换弹窗不是关窗：openDialog 传 false 把窗口留住。
+    if (compact && hideWindow) exitCompact();
     opts.onClose?.(v);
   };
   H.dialog = { close };

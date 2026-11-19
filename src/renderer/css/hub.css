@@ -1232,6 +1232,11 @@ body[data-compact] .body {
   display: none;
 }
 
+/* 紧凑弹窗的抓手：拖这一行等于拖窗口（逻辑见 hub.js 的 bindEvents） */
+body[data-compact] .dlg-head {
+  cursor: move;
+}
+
 body[data-compact] .layer {
   background: transparent;
 }
