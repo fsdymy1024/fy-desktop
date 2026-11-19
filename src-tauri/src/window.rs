@@ -270,6 +270,14 @@ pub fn already_running() -> bool {
 /// 这里显式关一次，便于自检/重启场景下马上能再起来。
 #[cfg(windows)]
 pub fn release_single_instance() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static RELEASED: AtomicBool = AtomicBool::new(false);
+
+    // `begin_shutdown` 声称幂等，但 `CloseHandle` 对同一个句柄第二次调用会失败；
+    // 若句柄值已被系统复用，那一次失败反倒会误关别的内核对象。用一次性开关挡住。
+    if RELEASED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     if let Some(h) = INSTANCE.get() {
         unsafe {
             let _ = windows::Win32::Foundation::CloseHandle(h.0);
@@ -284,6 +292,70 @@ pub fn already_running() -> bool {
 
 #[cfg(not(windows))]
 pub fn release_single_instance() {}
+
+/// 二次启动时，通知已经在跑的那个实例「把控制中心打开」。
+///
+/// 用命名事件而不是给窗口发消息：Tauri 的窗口类名由 tao 生成、不对外承诺，
+/// `FindWindowW` 找不到稳定目标；命名事件是内核对象，两边各自 Create / Open
+/// 就行，也不用关心窗口是否已经建好。
+#[cfg(windows)]
+pub fn signal_open_hub() {
+    use windows::core::w;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
+
+    unsafe {
+        match OpenEventW(EVENT_MODIFY_STATE, false, w!("Local\\fy-desktop-open-hub")) {
+            Ok(h) => {
+                let _ = SetEvent(h);
+                let _ = CloseHandle(h);
+            }
+            // 对方还没走到监听的挂载点（或已经退出）：静默放弃，
+            // 用户再点一次快捷方式即可，不必拿一个弹窗打扰他
+            Err(_) => eprintln!("[window] 已有实例没在监听，本次启动直接退出"),
+        }
+    }
+}
+
+/// 监听「打开控制中心」信号。只在主实例里挂一次。
+///
+/// 事件用 auto-reset：一次 SetEvent 唤醒一次等待，连续点几次快捷方式
+/// 只会把控制中心拉起/聚焦一次，不会排队。
+#[cfg(windows)]
+pub fn watch_open_hub<F: Fn() + Send + 'static>(f: F) {
+    use windows::core::w;
+    use windows::Win32::Foundation::{CloseHandle, WAIT_FAILED, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+
+    std::thread::spawn(move || unsafe {
+        let h = match CreateEventW(None, false, false, w!("Local\\fy-desktop-open-hub")) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[window] 创建「打开控制中心」事件失败：{e}");
+                return;
+            }
+        };
+        loop {
+            if crate::is_shutting_down() {
+                break;
+            }
+            // 500ms 超时只为让线程能感知退出；正常路径是事件一到就返回
+            let r = WaitForSingleObject(h, 500);
+            if r == WAIT_OBJECT_0 {
+                f();
+            } else if r == WAIT_FAILED {
+                break;
+            }
+        }
+        let _ = CloseHandle(h);
+    });
+}
+
+#[cfg(not(windows))]
+pub fn signal_open_hub() {}
+
+#[cfg(not(windows))]
+pub fn watch_open_hub<F: Fn() + Send + 'static>(_f: F) {}
 
 /// 前端把热区上报上来（物理像素）。窗口铺满主屏，所以等价于屏幕坐标。
 pub fn set_regions(state: &AppState, rects: Vec<[f64; 4]>, force: bool) {

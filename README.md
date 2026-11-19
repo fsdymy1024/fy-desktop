@@ -218,7 +218,7 @@ fy-desktop/
 │   │   ├── http.rs              全局复用的 reqwest 客户端
 │   │   ├── config.rs            配置读写、校验归一化与默认布局
 │   │   ├── state.rs             共享状态（配置、缩放、热区）
-│   │   ├── window.rs            铺满屏幕、穿透守卫、置顶/回底、单实例
+│   │   ├── window.rs            铺满屏幕、穿透守卫、置顶/回底、单实例（互斥体 + 唤起事件）
 │   │   ├── monitor.rs           系统与网络指标采样
 │   │   ├── weather.rs           天气双源
 │   │   ├── geo.rs               中文地名搜索（photon / OSM）
@@ -291,6 +291,11 @@ FY_SELFTEST=1 src-tauri/target/release/fy-desktop.exe
 
 **打开目录**：`FY_OPEN_ROOT=1` 启动即打开收纳根目录，用来单独验证「打开文件夹」这条链路；
 每次打开动作（含 ShellExecute 返回码）都会追加到 `%APPDATA%\com.fy.desktop\launch.log`。
+
+**单实例**：正常启动时同一台机器只允许一个实例，再点一次图标会把**已运行**实例的控制中心
+叫到最前面（命名事件 `Local\fy-desktop-open-hub`），第二个进程随即退出。调试时要同时跑两份
+（例如对着正在运行的正式版测 debug 版）请带 `FY_ALLOW_MULTI=1`；`FY_SHOT` / `FY_SELFTEST`
+也会自动放行。
 
 ## WebView 启动参数
 

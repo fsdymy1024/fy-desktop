@@ -55,7 +55,10 @@ pub fn run() {
         && std::env::var("FY_SELFTEST").is_err()
         && std::env::var("FY_ALLOW_MULTI").is_err();
     if solo && window::already_running() {
-        eprintln!("[window] 已有实例在运行，本次启动退出");
+        // 不是静默退出：用户点快捷方式就是想看到界面，
+        // 通知已有实例把控制中心拉起来，然后这边才退。
+        window::signal_open_hub();
+        eprintln!("[window] 已有实例在运行，已通知它打开控制中心");
         return;
     }
 
@@ -182,6 +185,13 @@ pub fn run() {
             // 那 ~100ms 由 glass::snapshot 自己瞬时开关（见 glass.rs）。
 
             tray::create(app.handle())?;
+
+            // 已经在跑的时候再点快捷方式：第二次启动会把信号发到这里的命名事件，
+            // 由这个线程把控制中心显示并聚焦（see window::signal_open_hub）。
+            {
+                let handle = app.handle().clone();
+                window::watch_open_hub(move || commands::show_hub(&handle));
+            }
 
             // 图标缓存只增不减会一直长，启动时清一次过期条目（7 天没动 / 超过 16MB）
             desktop::icons::prune_cache();

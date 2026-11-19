@@ -604,7 +604,17 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     后立刻 `BitBlt`，DWM 还没合成新帧，抓到的是窗口仍然隐形的上一帧，截图上就是「一个组件都没有」。
     等 180ms 再抓。这个现象极容易被误判成「渲染挂了」。
 14. **多开写同一份 `config.json`** → 连点两次图标起两个实例，两组窗口叠在一起，谁写谁覆盖。
-    命名互斥体 `Local\fy-desktop-single-instance` 保证单实例；`FY_SHOT` / `FY_SELFTEST` 下放行。
+    命名互斥体 `Local\fy-desktop-single-instance` 保证单实例；`FY_SHOT` / `FY_SELFTEST` /
+    `FY_ALLOW_MULTI=1` 下放行（调试必须能起第二份，见第 34 条）。
+    第二实例**不能只是静默退出**：用户点图标就是想看到界面，进程没了、屏幕上没任何变化，
+    报障会变成「程序打不开」。改成命名事件 `Local\fy-desktop-open-hub`：第二进程
+    `OpenEventW` + `SetEvent` 后退出，主实例里一个线程 `WaitForSingleObject` 等这个事件，
+    等到就 `show` + `unminimize` + `set_focus` 控制中心。
+    几个细节：事件用 **auto-reset**（连点几次只拉起一次，不排队）；**不用 `FindWindowW`
+    找窗口发消息**——tao 的窗口类名不对外承诺，且主实例可能还没建完窗口；第二进程
+    `OpenEventW` 失败（主实例还没挂上监听 / 正在退出）时只写日志、不弹框；Windows 的
+    前台锁偶尔拦下 `set_focus`，表现是任务栏图标闪一下，属预期。事件监听线程用
+    500ms 超时轮询退出信号，进程退出时不会留下一个等不到的线程。
 15. **`alwaysOnBottom` 的窗口会被 Chromium 当成后台视图卸载** → 系统始终认为桌面层窗口被遮住，
     Chromium 的遮挡计算把它归类为隐藏视图，触发后台节流，几分钟后卸载视图释放资源，恢复时重载整页。
     肉眼是「组件闪一下再回来」，代价是指标历史、玻璃底图全部重来。修法是 `additionalBrowserArgs`：
@@ -718,6 +728,9 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     深挖一层：`dumpLayout` 挂在 `loadGlass().then(...)` 里，抓屏慢时两拍
     （400ms / 6s）都可能排在截图退出之后。所以要验证某个瞬时状态，
     就在调试分支里**自己同步 `invoke('dev_dump')`**，别等 boot 那两拍。
+    第二实例现在还会顺手把已运行实例的控制中心叫到最前面（见第 14 条），
+    于是「看起来启动了」这件事比从前更能骗人：屏幕上出现的那扇窗户完全是旧进程的，
+    改动一处没生效也会显得「窗口都弹出来了，应该没问题」。
 35. **只改 `body` 上的 CSS 变量，不会让「渲染时固化」的 DOM 属性跟着变** →
     卡片的 `data-material` 是 `buildCard` 里 `w.material || cfg.material`
     求一次值写死的。改全局材质后 body 变量换了、浮层全变色，唯独桌面组件
