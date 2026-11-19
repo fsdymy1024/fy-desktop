@@ -1511,6 +1511,88 @@ function bindGlobalEvents() {
     }).catch(() => {});
   };
 
+  /**
+   * 托盘菜单定位。三条约束，按优先级：
+   * 1) 菜单必须落在屏幕内、且不能压到任务栏那一条上——窗口铺满整屏（含任务栏区域），
+   *    而任务栏永远在最上层，被它盖住的部分看起来就是「菜单跑屏幕外了」；
+   * 2) 往任务栏的**对面**展开，尽量贴着托盘图标；
+   * 3) 空间不够就翻到图标另一侧，最后才夹回可用区域。
+   *
+   * 任务栏在哪条边，用**图标矩形**判断：托盘图标就画在任务栏里，离哪条屏幕边最近，
+   * 任务栏就在哪条边。不用工作区判断——竖排任务栏下它并不可靠（实测右侧任务栏时，
+   * 拿到的 work_area 一度仍是「下方少了 48px」的形状），而图标矩形是系统直接给的。
+   * 工作区只做最后一道兜底。
+   *
+   * rect 是物理像素的图标矩形（后端已换成窗口坐标），wa 是工作区 [x, y, w, h]。
+   */
+  function placeTrayMenu(tm, rect) {
+    const d = dpr();
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const iconL = rect.x / d;
+    const iconT = rect.y / d;
+    const iconR = iconL + (rect.w || 0) / d;
+    const iconB = iconT + (rect.h || 0) / d;
+
+    const gap = 8; // 菜单与图标之间的空隙
+    const pad = 8; // 菜单与屏幕边缘的最小留白
+    const mw = tm.offsetWidth;
+    const mh = tm.offsetHeight;
+
+    // 图标离哪条边最近 = 任务栏贴在哪条边
+    const edge = [
+      ['left', iconL],
+      ['right', W - iconR],
+      ['top', iconT],
+      ['bottom', H - iconB]
+    ].sort((a, b) => a[1] - b[1])[0][0];
+
+    let x;
+    let y;
+    if (edge === 'left') {
+      // 竖排任务栏：从任务栏内侧展开，底边与图标对齐（和系统菜单一致）
+      x = iconR + gap;
+      y = iconB - mh;
+    } else if (edge === 'right') {
+      x = iconL - gap - mw;
+      y = iconB - mh;
+    } else if (edge === 'top') {
+      x = iconR - mw;
+      y = iconB + gap;
+    } else {
+      // 底部任务栏（绝大多数场景）：向上弹，右对齐图标
+      x = iconR - mw;
+      y = iconT - gap - mh;
+    }
+
+    // 放不下就翻到图标另一侧
+    if (x + mw > W - pad) x = iconL - gap - mw;
+    if (x < pad) x = iconR + gap;
+    if (y < pad) y = iconB + gap;
+    if (y + mh > H - pad) y = iconT - gap - mh;
+
+    // 工作区兜底：别压到任务栏那一条上。工作区明显不合理（装不下菜单）时直接忽略。
+    if (Array.isArray(rect.wa) && rect.wa.length === 4 && rect.wa[2] > 0) {
+      const wl = rect.wa[0] / d;
+      const wt = rect.wa[1] / d;
+      const wr = wl + rect.wa[2] / d;
+      const wb = wt + rect.wa[3] / d;
+      if (wr - wl >= mw + pad * 2 && wb - wt >= mh + pad * 2) {
+        x = Math.min(Math.max(x, wl + pad), wr - mw - pad);
+        y = Math.min(Math.max(y, wt + pad), wb - mh - pad);
+      }
+    }
+
+    // 最后夹回窗口内（菜单比屏幕还大时以左上留白优先）
+    x = Math.min(Math.max(x, pad), Math.max(pad, W - mw - pad));
+    y = Math.min(Math.max(y, pad), Math.max(pad, H - mh - pad));
+
+    tm.style.left = `${Math.round(x)}px`;
+    tm.style.top = `${Math.round(y)}px`;
+    tm.style.right = '';
+    tm.style.bottom = '';
+  }
+
   function openTrayMenu(rect) {
     closeTrayMenu();
     const tick = '<span class="tm-tick" aria-hidden="true">✓</span>';
@@ -1528,25 +1610,24 @@ function bindGlobalEvents() {
       <button class="tm-item danger" data-act="quit" role="menuitem">${tick}退出 fy-desktop</button>
     </div>`;
 
-    // 定位：贴着托盘图标弹。rect 是图标的物理坐标，换算成 CSS 像素。
-    const d = dpr();
-    const iconRight = (rect.x + (rect.w || 0)) / d;
-    const iconTop = rect.y / d;
-    const iconBottom = (rect.y + (rect.h || 0)) / d;
+    // 定位：先显示再量尺寸——`hidden` 的祖先里 `offsetWidth` 恒为 0，量不出菜单大小。
     const tm = trayHost.firstElementChild;
-    if (iconTop > window.innerHeight / 2) {
-      // 底部任务栏（绝大多数场景）：菜单向上弹，底边贴图标顶
-      tm.style.top = '';
-      tm.style.bottom = `${Math.max(8, window.innerHeight - iconTop + 8)}px`;
-    } else {
-      // 顶部任务栏：向下弹
-      tm.style.bottom = '';
-      tm.style.top = `${iconBottom + 8}px`;
-    }
-    tm.style.right = `${Math.max(8, window.innerWidth - iconRight + 4)}px`;
-
     trayMenuOpen = true;
     trayHost.hidden = false;
+    placeTrayMenu(tm, rect);
+    // 调试：把量到的尺寸与落点记进 dump，核对定位是不是按预期算的
+    if (S.uitest.startsWith('tray')) {
+      const box = tm.getBoundingClientRect();
+      S.trayProbe = {
+        ...(S.trayProbe || {}),
+        input: rect,
+        inner: [window.innerWidth, window.innerHeight],
+        dpr: dpr(),
+        menu: [tm.offsetWidth, tm.offsetHeight],
+        at: [tm.style.left, tm.style.top],
+        box: [Math.round(box.left), Math.round(box.top), Math.round(box.width), Math.round(box.height)]
+      };
+    }
     S.trayMenu = true;
     // 菜单开着时整窗必须可点（平时穿透）：updateHit 的 force 会放行
     S.force = true;
@@ -1573,16 +1654,33 @@ function bindGlobalEvents() {
     closeTrayMenu();
   }).catch(() => {});
 
-  // 调试：FY_UI=traymenu 直接弹出托盘菜单，再点一下菜单外面，
-  // 验证「点其它地方收回」。结果写进 S.trayProbe。
-  if (S.uitest === 'traymenu')
+  // 调试：FY_UI=traymenu|traybottom|trayright|trayleft|traytop 直接弹出托盘菜单，
+  // 再点一下菜单外面，验证「点其它地方收回」。结果写进 S.trayProbe。
+  const trayEdge = {
+    traymenu: 'bottom',
+    traybottom: 'bottom',
+    trayright: 'right',
+    trayleft: 'left',
+    traytop: 'top'
+  }[S.uitest];
+  if (trayEdge)
     setTimeout(() => {
-      openTrayMenu({
-        x: (window.innerWidth - 140) * dpr(),
-        y: (window.innerHeight - 120) * dpr(),
-        w: 40 * dpr(),
-        h: 40 * dpr()
-      });
+      const d = dpr();
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      // 真实点击时这些数由后端下发；探针假造一条 48px 厚的任务栏贴在该条边上，
+      // 把「按任务栏所在边定位」的四条分支都走到。图标取该条边的中段。
+      const t = 48; // 任务栏厚度（CSS 像素）
+      const s = 40; // 图标边长
+      const rect =
+        trayEdge === 'right'
+          ? { x: (W - t) * d, y: ((H - s) / 2) * d, w: s * d, h: s * d, wa: [0, 0, (W - t) * d, H * d] }
+          : trayEdge === 'left'
+            ? { x: 0, y: ((H - s) / 2) * d, w: s * d, h: s * d, wa: [t * d, 0, (W - t) * d, H * d] }
+            : trayEdge === 'top'
+              ? { x: ((W - s) / 2) * d, y: 0, w: s * d, h: s * d, wa: [0, t * d, W * d, (H - t) * d] }
+              : { x: (W - 140) * d, y: (H - 120) * d, w: s * d, h: s * d, wa: [0, 0, W * d, (H - t) * d] };
+      openTrayMenu(rect);
       setTimeout(() => {
         const box = trayHost.querySelector('.tm');
         if (!box) return;
@@ -1591,7 +1689,7 @@ function bindGlobalEvents() {
         const y = Math.max(1, r.top + 20);
         const target = document.elementFromPoint(x, y) || document.body;
         target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }));
-        S.trayProbe = { closedByOutside: trayHost.hidden };
+        S.trayProbe = { ...(S.trayProbe || {}), closedByOutside: trayHost.hidden };
         setTimeout(() => dumpHook?.(), 200);
       }, 700);
     }, 500);
