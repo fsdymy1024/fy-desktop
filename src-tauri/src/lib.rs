@@ -94,6 +94,7 @@ pub fn run() {
             commands::set_note,
             commands::set_hit_regions,
             commands::set_menu_rect,
+            commands::set_tray_menu_layer,
             commands::glass_snapshot,
             commands::set_autostart,
             commands::get_autostart,

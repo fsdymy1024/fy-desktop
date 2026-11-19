@@ -114,7 +114,10 @@ pub fn show_no_activate(hwnd: isize) {
 #[cfg(not(windows))]
 pub fn show_no_activate(_hwnd: isize) {}
 
-/// 临时置顶（自检截图时用）
+/// 临时置顶（自检截图、托盘菜单展开时用）。
+///
+/// 调用方必须**先**把窗口的 `always_on_bottom` 关掉：tao 在 `WM_WINDOWPOSCHANGING`
+/// 里会把任何 z-order 请求改写成 `HWND_BOTTOM`，标志还在时这一步抬不上去。
 #[cfg(windows)]
 pub fn raise_temporarily(hwnd: isize) {
     use windows::Win32::UI::WindowsAndMessaging::{

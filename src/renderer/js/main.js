@@ -1509,6 +1509,8 @@ function bindGlobalEvents() {
     // 通知后端停止「菜单外点击」监听
     invoke('set_menu_rect', { rect: null }).catch(() => {});
     updateHit();
+    // 菜单收起，桌面层放回最底层。漏掉这一下，组件会一直浮在别的窗口上面。
+    invoke('set_tray_menu_layer', { on: false }).catch(() => {});
   };
 
   // 注意判的是 .tm 菜单盒，不是 trayHost：#traymenu 是铺满全屏的容器，
@@ -1658,6 +1660,10 @@ function bindGlobalEvents() {
     // 恢复成整屏透明，下面放视频又开始掉帧。菜单盒已经是热区，窗口只盖它；
     // 菜单外的点击由后端盯全局按键（set_menu_rect → menu:outside）收起。
     updateHit();
+    // 桌面层平时按 alwaysOnBottom 常驻最底层：只要别的窗口一激活就压在组件上面，
+    // 菜单也跟着被盖住。菜单开着的这几秒把这一层临时抬到最上层，收起时放回底层
+    // （见 closeTrayMenu）。窗口仍只有「组件 + 菜单」那几块区域，抬起不妨碍别处点击。
+    invoke('set_tray_menu_layer', { on: true }).catch(() => {});
     // 托盘点击本身不在文档流里，mousedown 监听下一拍再挂也无妨；
     // 用捕获阶段，防止菜单内按钮的 mousedown 冒泡误关
     setTimeout(() => document.addEventListener('mousedown', trayOutside, true), 0);

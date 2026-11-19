@@ -554,6 +554,37 @@ pub fn set_menu_rect(state: State<'_, AppState>, rect: Option<[f64; 4]>) {
     h.last_down = false;
 }
 
+/// 托盘菜单开着时，把桌面层临时抬到所有窗口之上；收起时放回桌面层。
+///
+/// 托盘菜单是画在主窗口里的（`#traymenu`），而主窗口按设计常驻 `alwaysOnBottom`：
+/// 只要别的窗口被激活，它就压在我们上面，菜单跟着被盖住。系统托盘菜单是独立弹窗，
+/// 天然在最上层——这里用同一个观感：菜单开着的这几秒把窗口抬起来，关了立刻放回底层。
+///
+/// 两个必须注意的点：
+/// 1) 必须先 `set_always_on_bottom(false)` 再抬。tao 在 `WM_WINDOWPOSCHANGING`
+///    里会把任何 z-order 请求改写成 `HWND_BOTTOM`，标志还在的话 `SetWindowPos`
+///    抬上去当帧就被按回底层。
+/// 2) 两步都放在主线程里按顺序执行。`run_on_main_thread` 在事件循环线程上是**同步**
+///    执行的（tao 的 `execute_in_thread` 判断了线程 id），所以「改标志 → 抬升」的
+///    先后顺序是确定的；放到 IPC 线程上执行的话，抬升会先跑、标志随后被改，
+///    结果反而是同一次弹菜单里 z-order 时对时不对。
+#[tauri::command]
+pub fn set_tray_menu_layer(app: AppHandle, on: bool) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let Some(win) = handle.get_webview_window("main") else {
+            return;
+        };
+        // on=true → 关掉「常驻底层」；on=false → 恢复。恢复这一下本身就是
+        // SetWindowPos(HWND_BOTTOM)，顺带把 topmost 摘掉，不用再补一次调用。
+        let _ = win.set_always_on_bottom(!on);
+        if on {
+            crate::window::raise_temporarily(hwnd_of(&win));
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
 /// 抓一张不含本窗口的桌面底图，给前端做毛玻璃背景
 #[tauri::command]
 pub fn glass_snapshot(app: AppHandle) -> Result<String, String> {
