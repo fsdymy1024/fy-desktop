@@ -19,7 +19,7 @@ pub mod weather;
 pub mod window;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
@@ -27,12 +27,33 @@ use std::sync::OnceLock;
 pub static BORN: OnceLock<std::time::Instant> = OnceLock::new();
 /// 前端有没有跑到 `ui_ready`。窗口显示已经不再依赖它，这个标志只用于诊断与兜底。
 pub static UI_READY: AtomicBool = AtomicBool::new(false);
+/// 托盘菜单小窗（traypop）的前端有没有跑起来。没跑起来时右键请求先攒着。
+pub static TRAY_READY: AtomicBool = AtomicBool::new(false);
 /// 退出信号。后台线程（指标、天气、穿透守卫）看到它就收工，
 /// 而不是靠「进程退出时被系统一起干掉」——自检、多开场景下那种假设不成立。
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 pub fn is_shutting_down() -> bool {
     SHUTDOWN.load(Ordering::Relaxed)
+}
+
+/// 把攒着的「打开托盘菜单」请求发给小窗（只在它已就绪时发）。
+///
+/// 两个方向都会调：右键那一刻（`tray::open_menu`）和小窗刚就绪那一刻
+/// （`commands::traypop_ready`）。取走即清空，所以同一份请求只会发一次。
+pub fn flush_tray_pending(app: &tauri::AppHandle) {
+    if !TRAY_READY.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let payload = state::lock(&state.tray_pending).take();
+    if let Some(p) = payload {
+        if let Err(e) = app.emit_to("traypop", "tray:open-menu", p) {
+            eprintln!("[tray] 发 open-menu 失败：{e}");
+        }
+    }
 }
 
 /// 通知所有后台线程退出，并放掉单实例互斥体。幂等。
@@ -94,7 +115,9 @@ pub fn run() {
             commands::set_note,
             commands::set_hit_regions,
             commands::set_menu_rect,
-            commands::set_tray_menu_layer,
+            commands::traypop_ready,
+            commands::traypop_show,
+            commands::traypop_hide,
             commands::glass_snapshot,
             commands::set_autostart,
             commands::get_autostart,

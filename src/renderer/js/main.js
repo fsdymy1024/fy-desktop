@@ -5,7 +5,7 @@
  * 所以后端报上来的热区要乘 devicePixelRatio，拖拽位移要除以 scale。
  */
 
-import { invoke, invokeRetry, listen, unlistenAll } from './bridge.js';
+import { invoke, invokeRetry, listen, emitTo, unlistenAll } from './bridge.js';
 import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf, GAP } from './widgets.js';
 import { renderOrganizer, groupAtPoint, resetLoose, clearIconCache } from './organizer.js';
 import { clamp } from './util.js';
@@ -116,7 +116,6 @@ function loadDebug() {
         promptInput,
         loadGlass
       });
-      // 托盘菜单探针还留在本文件（它要复用闭包里的 trayMenuOpen 等状态），
       // 落盘能力由 debug.js 回传
       dumpHook = api?.dump || null;
     })
@@ -1128,9 +1127,9 @@ function updateHit() {
   if (bar && !bar.hidden) push(bar, 24);
   const menu = $('#menu');
   if (menu && !menu.hidden) push(menu, 24);
-  const trayMenu = $('#traymenu');
-  if (trayMenu && !trayMenu.hidden) push(trayMenu.firstElementChild || trayMenu, 24);
 
+  // 托盘菜单不在这里：#traymenu 已经搬进独立小窗（traypop），
+  // 那是另一个窗口，和本窗口的区域裁剪无关。
   // 右键菜单不开「整窗接管」：它只是热区之一。菜单外的空白要能穿透回桌面，
   // 这样在空白处点右键，桌面自己的菜单会照常弹出来（和别的桌面软件一致），
   // 我们的菜单则靠后端的「菜单外点击」检测收起（见 set_menu_rect）。
@@ -1487,207 +1486,69 @@ function bindGlobalEvents() {
     paintShotVars();
   });
 
-  // ---- 托盘自绘菜单 ----
-  // 原生 Win32 托盘菜单的字体和配色是系统样式，没法跟随材质、也用不上
-  // 组件的 MiSans。托盘点击只把图标位置发过来（tray:open-menu），
-  // 菜单本体在 #traymenu：配色走 --pop-*（跟着全局材质变），
-  // 字体走 --font（跟组件一致）。动作复用现有命令与面板。
-  listen('tray:open-menu', (e) => {
-    if (e.payload && typeof e.payload.x === 'number') openTrayMenu(e.payload);
-  });
-
-  const trayHost = $('#traymenu');
-  let trayMenuOpen = false;
-
-  const closeTrayMenu = () => {
-    if (!trayMenuOpen) return;
-    trayMenuOpen = false;
-    trayHost.hidden = true;
-    S.trayMenu = false;
-    document.removeEventListener('mousedown', trayOutside, true);
-    document.removeEventListener('keydown', trayEsc, true);
-    // 通知后端停止「菜单外点击」监听
-    invoke('set_menu_rect', { rect: null }).catch(() => {});
-    updateHit();
-    // 菜单收起，桌面层放回最底层。漏掉这一下，组件会一直浮在别的窗口上面。
-    invoke('set_tray_menu_layer', { on: false }).catch(() => {});
-  };
-
-  // 注意判的是 .tm 菜单盒，不是 trayHost：#traymenu 是铺满全屏的容器，
-  // 用 contains(trayHost) 的话任何点击都算「在菜单里」，菜单永远收不回去。
-  const trayOutside = (e) => {
-    const box = trayHost.querySelector('.tm');
-    if (!box || !box.contains(e.target)) closeTrayMenu();
-  };
-  const trayEsc = (e) => {
-    if (e.key === 'Escape') closeTrayMenu();
-  };
-
-  /** 把菜单盒的物理矩形报给后端：左键落在它外面（包括点在别的应用、任务栏上）
-   *  时后端推 menu:outside，把菜单收起。前端 mousedown 只能覆盖我们自己窗口内的点击。 */
-  const syncMenuRect = () => {
-    const box = trayHost.querySelector('.tm');
-    if (!trayMenuOpen || !box) {
-      invoke('set_menu_rect', { rect: null }).catch(() => {});
-      return;
-    }
-    const r = box.getBoundingClientRect();
-    const d = dpr();
-    invoke('set_menu_rect', {
-      rect: [r.left * d, r.top * d, r.right * d, r.bottom * d]
+  // ---- 托盘菜单的动作 ----
+  // 菜单本体在独立小窗里（traymenu.html + js/traymenu.js）：那个窗口自己是
+  // alwaysOnTop，所以不会再被别的窗口压住，桌面层也不必为了菜单临时抬层。
+  // 这里只负责「点了哪一项」，改完配置再把勾选态推回小窗。
+  const pushTrayState = () =>
+    emitTo('traypop', 'tray:state', {
+      autostart: !!S.cfg.autostart,
+      seconds: S.cfg.show_seconds !== false
     }).catch(() => {});
-  };
 
-  /**
-   * 托盘菜单定位。三条约束，按优先级：
-   * 1) 菜单必须落在屏幕内、且不能压到任务栏那一条上——窗口铺满整屏（含任务栏区域），
-   *    而任务栏永远在最上层，被它盖住的部分看起来就是「菜单跑屏幕外了」；
-   * 2) 往任务栏的**对面**展开，尽量贴着托盘图标；
-   * 3) 空间不够就翻到图标另一侧，最后才夹回可用区域。
-   *
-   * 任务栏在哪条边，用**图标矩形**判断：托盘图标就画在任务栏里，离哪条屏幕边最近，
-   * 任务栏就在哪条边。不用工作区判断——竖排任务栏下它并不可靠（实测右侧任务栏时，
-   * 拿到的 work_area 一度仍是「下方少了 48px」的形状），而图标矩形是系统直接给的。
-   * 工作区只做最后一道兜底。
-   *
-   * rect 是物理像素的图标矩形（后端已换成窗口坐标），wa 是工作区 [x, y, w, h]。
-   */
-  function placeTrayMenu(tm, rect) {
-    const d = dpr();
-    const W = window.innerWidth;
-    const H = window.innerHeight;
-    const iconL = rect.x / d;
-    const iconT = rect.y / d;
-    const iconR = iconL + (rect.w || 0) / d;
-    const iconB = iconT + (rect.h || 0) / d;
-
-    const gap = 8; // 菜单与图标之间的空隙
-    const pad = 8; // 菜单与屏幕边缘的最小留白
-    const mw = tm.offsetWidth;
-    const mh = tm.offsetHeight;
-
-    // 图标离哪条边最近 = 任务栏贴在哪条边
-    const edge = [
-      ['left', iconL],
-      ['right', W - iconR],
-      ['top', iconT],
-      ['bottom', H - iconB]
-    ].sort((a, b) => a[1] - b[1])[0][0];
-
-    let x;
-    let y;
-    if (edge === 'left') {
-      // 竖排任务栏：从任务栏内侧展开，底边与图标对齐（和系统菜单一致）
-      x = iconR + gap;
-      y = iconB - mh;
-    } else if (edge === 'right') {
-      x = iconL - gap - mw;
-      y = iconB - mh;
-    } else if (edge === 'top') {
-      x = iconR - mw;
-      y = iconB + gap;
-    } else {
-      // 底部任务栏（绝大多数场景）：向上弹，右对齐图标
-      x = iconR - mw;
-      y = iconT - gap - mh;
-    }
-
-    // 放不下就翻到图标另一侧
-    if (x + mw > W - pad) x = iconL - gap - mw;
-    if (x < pad) x = iconR + gap;
-    if (y < pad) y = iconB + gap;
-    if (y + mh > H - pad) y = iconT - gap - mh;
-
-    // 工作区兜底：别压到任务栏那一条上。工作区明显不合理（装不下菜单）时直接忽略。
-    if (Array.isArray(rect.wa) && rect.wa.length === 4 && rect.wa[2] > 0) {
-      const wl = rect.wa[0] / d;
-      const wt = rect.wa[1] / d;
-      const wr = wl + rect.wa[2] / d;
-      const wb = wt + rect.wa[3] / d;
-      if (wr - wl >= mw + pad * 2 && wb - wt >= mh + pad * 2) {
-        x = Math.min(Math.max(x, wl + pad), wr - mw - pad);
-        y = Math.min(Math.max(y, wt + pad), wb - mh - pad);
+  listen('tray:act', async (e) => {
+    const act = String(e.payload || '');
+    switch (act) {
+      case 'hub':
+        // view 传 null：沿用控制中心上次停留的页面，冷启动时走默认页。
+        // 不能用 toggle_hub —— 菜单点了就是要「打开」，不该把已开的窗口收起来。
+        openHub(null);
+        break;
+      case 'root':
+        invoke('open_root').catch(() => {});
+        break;
+      case 'conf':
+        invoke('open_config_dir').catch(() => {});
+        break;
+      case 'quit':
+        invoke('quit_app');
+        break;
+      case 'autostart': {
+        // 勾选切换不关菜单，和原生勾选菜单的行为一致
+        const want = !S.cfg.autostart;
+        try {
+          S.cfg.autostart = !!(await invoke('set_autostart', { on: want }));
+          syncConfig();
+        } catch (err) {
+          // 写注册表失败：勾选态回滚到真实值，并明确提示。
+          // 以前这里 catch {} 静默吞掉，界面显示「已开」但系统里其实没有。
+          S.cfg.autostart = !!(await invoke('get_autostart').catch(() => !!S.cfg.autostart));
+          toast(`开机自启设置失败：${err?.message || err}`);
+        }
+        pushTrayState();
+        break;
+      }
+      case 'seconds': {
+        const next = !(S.cfg.show_seconds !== false);
+        S.cfg.show_seconds = next;
+        setShowSeconds(next);
+        for (const inst of S.mounted.values()) inst?.tick?.();
+        save();
+        pushTrayState();
+        break;
       }
     }
-
-    // 最后夹回窗口内（菜单比屏幕还大时以左上留白优先）
-    x = Math.min(Math.max(x, pad), Math.max(pad, W - mw - pad));
-    y = Math.min(Math.max(y, pad), Math.max(pad, H - mh - pad));
-
-    tm.style.left = `${Math.round(x)}px`;
-    tm.style.top = `${Math.round(y)}px`;
-    tm.style.right = '';
-    tm.style.bottom = '';
-  }
-
-  function openTrayMenu(rect) {
-    closeTrayMenu();
-    const tick = '<span class="tm-tick" aria-hidden="true">✓</span>';
-    // 添加组件 / 刷新底图 / 天气地区 / 关于都已经是控制中心里的页面，
-    // 菜单不再各留一个入口，只在第一行给一个「控制中心」。
-    trayHost.innerHTML = `<div class="tm" role="menu">
-      <button class="tm-item" data-act="hub" role="menuitem">${tick}控制中心</button>
-      <div class="tm-sep"></div>
-      <button class="tm-item check" data-act="autostart" aria-checked="${!!S.cfg.autostart}" role="menuitemcheckbox">${tick}开机自启</button>
-      <button class="tm-item check" data-act="seconds" aria-checked="${S.cfg.show_seconds !== false}" role="menuitemcheckbox">${tick}时钟显示秒</button>
-      <div class="tm-sep"></div>
-      <button class="tm-item" data-act="root" role="menuitem">${tick}打开收纳文件夹</button>
-      <button class="tm-item" data-act="conf" role="menuitem">${tick}设置文件…</button>
-      <div class="tm-sep"></div>
-      <button class="tm-item danger" data-act="quit" role="menuitem">${tick}退出 fy-desktop</button>
-    </div>`;
-
-    // 定位：先显示再量尺寸——`hidden` 的祖先里 `offsetWidth` 恒为 0，量不出菜单大小。
-    const tm = trayHost.firstElementChild;
-    trayMenuOpen = true;
-    trayHost.hidden = false;
-    placeTrayMenu(tm, rect);
-    // 调试：把量到的尺寸与落点记进 dump，核对定位是不是按预期算的
-    if (S.uitest.startsWith('tray')) {
-      const box = tm.getBoundingClientRect();
-      S.trayProbe = {
-        ...(S.trayProbe || {}),
-        input: rect,
-        inner: [window.innerWidth, window.innerHeight],
-        dpr: dpr(),
-        menu: [tm.offsetWidth, tm.offsetHeight],
-        at: [tm.style.left, tm.style.top],
-        box: [Math.round(box.left), Math.round(box.top), Math.round(box.width), Math.round(box.height)]
-      };
-    }
-    S.trayMenu = true;
-    // 不整窗接管：托盘菜单要一直挂在那儿几秒到几十秒，整窗接管等于把窗口
-    // 恢复成整屏透明，下面放视频又开始掉帧。菜单盒已经是热区，窗口只盖它；
-    // 菜单外的点击由后端盯全局按键（set_menu_rect → menu:outside）收起。
-    updateHit();
-    // 桌面层平时按 alwaysOnBottom 常驻最底层：只要别的窗口一激活就压在组件上面，
-    // 菜单也跟着被盖住。菜单开着的这几秒把这一层临时抬到最上层，收起时放回底层
-    // （见 closeTrayMenu）。窗口仍只有「组件 + 菜单」那几块区域，抬起不妨碍别处点击。
-    invoke('set_tray_menu_layer', { on: true }).catch(() => {});
-    // 托盘点击本身不在文档流里，mousedown 监听下一拍再挂也无妨；
-    // 用捕获阶段，防止菜单内按钮的 mousedown 冒泡误关
-    setTimeout(() => document.addEventListener('mousedown', trayOutside, true), 0);
-    document.addEventListener('keydown', trayEsc, true);
-    // 等菜单完成布局再量矩形，交给后端做「全局点击」判定
-    requestAnimationFrame(syncMenuRect);
-    // 对一次账：注册表里的真实值可能被系统/其它清理工具改过，
-    // 菜单上的勾选必须反映系统现状，而不是配置里的意愿
-    invoke('get_autostart')
-      .then((on) => {
-        S.cfg.autostart = !!on;
-        trayHost.querySelector('[data-act="autostart"]')?.setAttribute('aria-checked', String(!!on));
-      })
-      .catch(() => {});
-  }
+  });
 
   listen('menu:outside', () => {
-    // 卡片右键菜单与托盘菜单共用一个后端矩形槽位，两个都收一下
+    // 卡片右键菜单的矩形和托盘小窗共用一个后端槽位：点菜单外面时两边都该收起。
+    // 托盘小窗自己也在听这个事件（见 js/traymenu.js），这里只管卡片菜单。
     if (!$('#menu').hidden) hideMenu();
-    closeTrayMenu();
   }).catch(() => {});
 
-  // 调试：FY_UI=traymenu|traybottom|trayright|trayleft|traytop 直接弹出托盘菜单，
-  // 再点一下菜单外面，验证「点其它地方收回」。结果写进 S.trayProbe。
+  // 调试：FY_UI=traymenu|traybottom|trayright|trayleft|traytop 直接弹托盘菜单，
+  // 核对四种任务栏位置下的落点。菜单本体在 traypop 小窗里，这里只伪造一条托盘
+  // 事件的负载把它叫出来（和真机上后端发的那条同构，坐标全是屏幕物理像素）。
   const trayEdge = {
     traymenu: 'bottom',
     traybottom: 'bottom',
@@ -1700,84 +1561,26 @@ function bindGlobalEvents() {
       const d = dpr();
       const W = window.innerWidth;
       const H = window.innerHeight;
-      // 真实点击时这些数由后端下发；探针假造一条 48px 厚的任务栏贴在该条边上，
-      // 把「按任务栏所在边定位」的四条分支都走到。图标取该条边的中段。
       const t = 48; // 任务栏厚度（CSS 像素）
       const s = 40; // 图标边长
-      const rect =
+      // 假造一条 48px 厚的任务栏贴在该条边上，图标取该条边的中段
+      const icon =
         trayEdge === 'right'
-          ? { x: (W - t) * d, y: ((H - s) / 2) * d, w: s * d, h: s * d, wa: [0, 0, (W - t) * d, H * d] }
+          ? { x: (W - t) * d, y: ((H - s) / 2) * d, wa: [0, 0, (W - t) * d, H * d] }
           : trayEdge === 'left'
-            ? { x: 0, y: ((H - s) / 2) * d, w: s * d, h: s * d, wa: [t * d, 0, (W - t) * d, H * d] }
+            ? { x: 0, y: ((H - s) / 2) * d, wa: [t * d, 0, (W - t) * d, H * d] }
             : trayEdge === 'top'
-              ? { x: ((W - s) / 2) * d, y: 0, w: s * d, h: s * d, wa: [0, t * d, W * d, (H - t) * d] }
-              : { x: (W - 140) * d, y: (H - 120) * d, w: s * d, h: s * d, wa: [0, 0, W * d, (H - t) * d] };
-      openTrayMenu(rect);
-      setTimeout(() => {
-        const box = trayHost.querySelector('.tm');
-        if (!box) return;
-        const r = box.getBoundingClientRect();
-        const x = Math.max(1, r.left - 30);
-        const y = Math.max(1, r.top + 20);
-        const target = document.elementFromPoint(x, y) || document.body;
-        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }));
-        S.trayProbe = { ...(S.trayProbe || {}), closedByOutside: trayHost.hidden };
-        setTimeout(() => dumpHook?.(), 200);
-      }, 700);
-    }, 500);
-
-  trayHost.addEventListener('click', async (e) => {
-    if (!trayMenuOpen) return;
-    const btn = e.target.closest('.tm-item');
-    if (!btn) return;
-    const act = btn.dataset.act;
-    switch (act) {
-      case 'hub':
-        // view 传 null：沿用控制中心上次停留的页面，冷启动时走默认页。
-        // 不能用 toggle_hub —— 菜单点了就是要「打开」，不该把已开的窗口收起来。
-        closeTrayMenu();
-        openHub(null);
-        break;
-      case 'root':
-        closeTrayMenu();
-        invoke('open_root').catch(() => {});
-        break;
-      case 'conf':
-        closeTrayMenu();
-        invoke('open_config_dir').catch(() => {});
-        break;
-      case 'quit':
-        invoke('quit_app');
-        break;
-      case 'autostart': {
-        // 勾选切换不关菜单，和原生勾选菜单的行为一致
-        const want = !S.cfg.autostart;
-        try {
-          const after = await invoke('set_autostart', { on: want });
-          S.cfg.autostart = !!after;
-          btn.setAttribute('aria-checked', String(!!after));
-          syncConfig();
-        } catch (e) {
-          // 写注册表失败：把勾选态回滚到真实值，并明确提示。
-          // 以前这里 catch {} 静默吞掉，界面显示「已开」但系统里其实没有。
-          const real = await invoke('get_autostart').catch(() => !!S.cfg.autostart);
-          S.cfg.autostart = !!real;
-          btn.setAttribute('aria-checked', String(!!real));
-          toast(`开机自启设置失败：${e?.message || e}`);
-        }
-        break;
-      }
-      case 'seconds': {
-        const next = !(S.cfg.show_seconds !== false);
-        S.cfg.show_seconds = next;
-        setShowSeconds(next);
-        for (const inst of S.mounted.values()) inst?.tick?.();
-        btn.setAttribute('aria-checked', String(next));
-        save();
-        break;
-      }
-    }
-  });
+              ? { x: ((W - s) / 2) * d, y: 0, wa: [0, t * d, W * d, (H - t) * d] }
+              : { x: (W - 140) * d, y: (H - 120) * d, wa: [0, 0, W * d, (H - t) * d] };
+      emitTo('traypop', 'tray:open-menu', {
+        ...icon,
+        w: s * d,
+        h: s * d,
+        sw: W * d,
+        sh: H * d
+      }).catch(() => {});
+      // 等 1.5s 是因为菜单在小窗里，得等它的 WebView 挂好监听才收得到这条事件
+    }, 1500);
 
   // 托盘切换「时钟显示秒」：改全局开关后手动 tick 一次，不必重建卡片。
   // 注意回调拿到的是事件对象，开关值在 payload 里——直接 `!!on` 会永远是 true，

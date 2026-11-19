@@ -71,6 +71,10 @@ export const listen = (name, cb) => {
   return p;
 };
 
+/** 给另一个窗口发事件（托盘菜单小窗 → 主窗口这种跨窗口协作）。
+ *  目标窗口的 label 见 tauri.conf.json：main / hub / traypop。 */
+export const emitTo = (label, name, payload) => T.event.emitTo(label, name, payload);
+
 /** 退订本模块登记过的全部事件。幂等。 */
 export function unlistenAll() {
   for (const p of SUBS.splice(0)) {

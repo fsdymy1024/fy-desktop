@@ -114,6 +114,23 @@ pub fn show_no_activate(hwnd: isize) {
 #[cfg(not(windows))]
 pub fn show_no_activate(_hwnd: isize) {}
 
+/// 隐藏窗口。和 `show_no_activate` 一样直接走 Win32，不经 tao。
+///
+/// 必须绕过 `window.hide()`：tao 的可见性只是一个**内部标志**，真正的
+/// `ShowWindow(SW_HIDE)` 要等标志发生变化才执行（`apply_diff` 里 diff 为空直接返回）。
+/// 托盘菜单小窗是用 `show_no_activate` 显示的，tao 那边始终认为它「不可见」，
+/// 再调 `hide()` 就等于空转——菜单会一直挂在屏幕上。
+#[cfg(windows)]
+pub fn hide_window(hwnd: isize) {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+    unsafe {
+        let _ = ShowWindow(windows::Win32::Foundation::HWND(hwnd as *mut _), SW_HIDE);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn hide_window(_hwnd: isize) {}
+
 /// 临时置顶（自检截图、托盘菜单展开时用）。
 ///
 /// 调用方必须**先**把窗口的 `always_on_bottom` 关掉：tao 在 `WM_WINDOWPOSCHANGING`

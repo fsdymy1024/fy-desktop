@@ -21,7 +21,8 @@
   </div>
 
   <div id="menu" hidden></div>
-  <div id="traymenu" hidden></div>
+  <!-- 托盘菜单不在这里：它有独立窗口 traypop（traymenu.html），
+       否则会被压在 alwaysOnBottom 的桌面层里，被别的窗口盖住 -->
   <div id="toast" hidden></div>
 
   <!-- 兜底错误屏放成外部脚本：CSP 只允许 'self'，内联脚本会被拦掉 -->

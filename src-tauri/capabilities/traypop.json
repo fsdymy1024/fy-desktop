@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "traypop",
+  "description": "托盘菜单小窗：只听事件（open-menu / outside / state），窗口的显隐与摆位全部由 Rust 侧完成，前端不需要任何窗口 API。",
+  "windows": ["traypop"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:app:default"
+  ]
+}

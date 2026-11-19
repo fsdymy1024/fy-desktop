@@ -554,35 +554,74 @@ pub fn set_menu_rect(state: State<'_, AppState>, rect: Option<[f64; 4]>) {
     h.last_down = false;
 }
 
-/// 托盘菜单开着时，把桌面层临时抬到所有窗口之上；收起时放回桌面层。
+/// 托盘菜单小窗的前端就绪了（由 `js/traymenu.js` 在挂完监听后调用）。
 ///
-/// 托盘菜单是画在主窗口里的（`#traymenu`），而主窗口按设计常驻 `alwaysOnBottom`：
-/// 只要别的窗口被激活，它就压在我们上面，菜单跟着被盖住。系统托盘菜单是独立弹窗，
-/// 天然在最上层——这里用同一个观感：菜单开着的这几秒把窗口抬起来，关了立刻放回底层。
-///
-/// 两个必须注意的点：
-/// 1) 必须先 `set_always_on_bottom(false)` 再抬。tao 在 `WM_WINDOWPOSCHANGING`
-///    里会把任何 z-order 请求改写成 `HWND_BOTTOM`，标志还在的话 `SetWindowPos`
-///    抬上去当帧就被按回底层。
-/// 2) 两步都放在主线程里按顺序执行。`run_on_main_thread` 在事件循环线程上是**同步**
-///    执行的（tao 的 `execute_in_thread` 判断了线程 id），所以「改标志 → 抬升」的
-///    先后顺序是确定的；放到 IPC 线程上执行的话，抬升会先跑、标志随后被改，
-///    结果反而是同一次弹菜单里 z-order 时对时不对。
+/// 开机后头一两秒点托盘图标时，这个小窗的 WebView 可能还没跑起来，
+/// 那时 `tray::open_menu` 只能把请求攒进 `state.tray_pending`。这里补发一次。
 #[tauri::command]
-pub fn set_tray_menu_layer(app: AppHandle, on: bool) -> Result<(), String> {
+pub fn traypop_ready(app: AppHandle) {
+    crate::TRAY_READY.store(true, std::sync::atomic::Ordering::SeqCst);
+    eprintln!("[tray] 菜单小窗就绪");
+    crate::flush_tray_pending(&app);
+}
+
+/// 摆好并显示托盘菜单小窗（物理像素、屏幕坐标，全部由前端算好）。
+///
+/// 定位逻辑留在前端：任务栏可能在四条边上的任意一条，方向要靠图标矩形现场判断，
+/// 而且要按菜单实测尺寸夹回屏幕——这些都在 `js/traymenu.js` 里做完了。
+///
+/// 尺寸/位置/显示必须在主线程上按顺序执行：`set_size` / `set_position` 在 IPC 线程上
+/// 只是往事件循环里排任务，而 `show_no_activate` 是直接调 Win32——跑在 IPC 线程就会
+/// 出现「先显示、后挪位置」，肉眼看就是菜单从上一个位置闪一下再跳过去。
+#[tauri::command]
+pub fn traypop_show(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    rect: Option<[f64; 4]>,
+) -> Result<(), String> {
+    // 菜单外的点击只能靠后端轮询全局按键（见 window::spawn_hit_guard）：
+    // 点别的应用 / 任务栏时，我们根本收不到事件。所以这里顺手把菜单矩形交出去。
+    {
+        let mut hs = crate::state::lock(&state.hit);
+        hs.menu = rect;
+        hs.menu_armed = false;
+        hs.last_down = false;
+    }
+
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        let Some(win) = handle.get_webview_window("main") else {
+        let Some(win) = handle.get_webview_window("traypop") else {
+            eprintln!("[tray] traypop 窗口不存在，菜单无法显示（检查 tauri.conf.json）");
             return;
         };
-        // on=true → 关掉「常驻底层」；on=false → 恢复。恢复这一下本身就是
-        // SetWindowPos(HWND_BOTTOM)，顺带把 topmost 摘掉，不用再补一次调用。
-        let _ = win.set_always_on_bottom(!on);
-        if on {
-            crate::window::raise_temporarily(hwnd_of(&win));
-        }
+        eprintln!("[tray] 菜单小窗 {w}x{h} @ ({x},{y})");
+        let _ = win.set_size(tauri::PhysicalSize::new(
+            w.max(32.0) as u32,
+            h.max(32.0) as u32,
+        ));
+        let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
+        let hwnd = hwnd_of(&win);
+        // 不抢焦点：托盘菜单弹出来时用户可能正在别的窗口里打字
+        crate::window::show_no_activate(hwnd);
+        // 已经是 topmost 了，再抬一次是为了压过「别的 topmost 窗口」（比如置顶播放器）
+        crate::window::raise_temporarily(hwnd);
     })
     .map_err(|e| e.to_string())
+}
+
+/// 收起托盘菜单小窗。
+#[tauri::command]
+pub fn traypop_hide(app: AppHandle, state: State<'_, AppState>) {
+    if let Some(win) = app.get_webview_window("traypop") {
+        // 用 Win32 直接藏：tao 的 hide() 依赖内部可见性标志的变化，
+        // 而这个窗口是 show_no_activate 显示的，tao 认为它一直不可见（见 window.rs）。
+        crate::window::hide_window(hwnd_of(&win));
+    }
+    crate::state::lock(&state.hit).menu = None;
 }
 
 /// 抓一张不含本窗口的桌面底图，给前端做毛玻璃背景
@@ -593,17 +632,21 @@ pub fn glass_snapshot(app: AppHandle) -> Result<String, String> {
         .ok_or_else(|| "窗口不存在".to_string())?;
     let hwnd = hwnd_of(&win);
 
-    // 控制中心开着时也要从底图里排除，否则玻璃卡会透出它的影子
+    // 控制中心 / 托盘菜单开着时也要从底图里排除，否则玻璃卡会透出它们的影子。
+    // 托盘菜单小窗的「可见」状态不问 tao（它是用 ShowWindow 直接显示的，tao 那边
+    // 一直认为它不可见），只要窗口存在就先排除——对隐藏窗口设这个属性没有副作用。
     let hub = app
         .get_webview_window("hub")
         .filter(|w| w.is_visible().unwrap_or(false))
         .map(|w| hwnd_of(&w));
-    if let Some(h) = hub {
-        glass::exclude_hwnd(h);
+    let pop = app.get_webview_window("traypop").map(|w| hwnd_of(&w));
+    let others: Vec<isize> = hub.iter().chain(pop.iter()).copied().collect();
+    for h in &others {
+        glass::exclude_hwnd(*h);
     }
     let shot = glass::snapshot(hwnd, false);
-    if let Some(h) = hub {
-        glass::include_hwnd(h);
+    for h in &others {
+        glass::include_hwnd(*h);
     }
 
     match shot {

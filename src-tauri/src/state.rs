@@ -55,6 +55,10 @@ pub struct AppState {
     pub hit: Mutex<HitState>,
     /// 设计坐标系尺寸（= 窗口 CSS 像素 / 缩放）
     pub design: Mutex<(f64, f64)>,
+    /// 托盘菜单小窗还没加载完时先攒着的「打开菜单」请求。
+    /// 开机后头一两秒点托盘图标时，`traypop` 的 WebView 可能还没跑起来，
+    /// 只发事件会丢——攒一份，等它 ready 再补发（见 `tray::open_menu`）。
+    pub tray_pending: Mutex<Option<serde_json::Value>>,
 }
 
 impl AppState {
@@ -64,6 +68,7 @@ impl AppState {
             scale: Mutex::new(1.0),
             hit: Mutex::new(HitState::default()),
             design: Mutex::new((1920.0, 1080.0)),
+            tray_pending: Mutex::new(None),
         }
     }
 
