@@ -532,8 +532,16 @@ pub fn set_note(state: State<'_, AppState>, id: String, text: String) {
 }
 
 #[tauri::command]
-pub fn set_hit_regions(state: State<'_, AppState>, rects: Vec<[f64; 4]>, force: bool) {
-    crate::window::set_regions(&state, rects, force);
+pub fn set_hit_regions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    rects: Vec<[f64; 4]>,
+    paint: Option<Vec<[f64; 4]>>,
+    force: bool,
+) {
+    crate::window::set_regions(&state, rects, paint.unwrap_or_default(), force);
+    // 热区变了，窗口形状跟着变：空白处不属于我们，DWM 才能把视频放回叠加层
+    crate::window::apply_window_region(&app, &state);
 }
 
 /// 托盘菜单打开/关闭时由前端上报菜单矩形（物理像素）。

@@ -893,6 +893,8 @@ function attachPanelChrome(el) {
     const sy = e.clientY;
     const origin = { w: o.w, h: o.h || el.offsetHeight };
     S.force = true;
+    // 窗口是按热区裁的：一进拖拽就恢复整窗，否则拉出去的部分当场被裁掉
+    updateHit();
     const onMove = (ev) => {
       // 宽高也落 6px 网格：面板边缘才能和卡片边缘落在同一条线上
       o.w = onGrid(clamp(origin.w + (ev.clientX - sx) / S.scale, 320, S.design.w - o.x));
@@ -924,6 +926,7 @@ function attachPanelChrome(el) {
     // 和卡片同一套吸附：先贴邻卡的边（含其它卡片），贴不上再落 6px 网格
     const { xs, ys } = refLines(null, false);
     S.force = true;
+    updateHit();
     const onMove = (ev) => {
       const nx = clamp(origin.x + (ev.clientX - sx) / S.scale, 0, S.design.w - o.w);
       const ny = clamp(origin.y + (ev.clientY - sy) / S.scale, 0, S.design.h - oh);
@@ -1110,25 +1113,43 @@ function scheduleHit() {
 
 function updateHit() {
   const rects = [];
-  const push = (el) => {
+  // pad：窗口只保留报上去的矩形（+ 一圈外扩），外扩就是给阴影留的地方。
+  // 常驻卡片一律 0——多出来的那圈虽然能画出阴影，但也会把旁边桌面上的点击吃掉；
+  // 菜单 / toast 这类临时浮层才外扩，它们开着的几秒里挡一小圈无所谓。
+  const push = (el, pad = 0) => {
     const r = el.getBoundingClientRect();
     if (r.width < 3 || r.height < 3) return;
-    rects.push([r.left * dpr(), r.top * dpr(), r.right * dpr(), r.bottom * dpr()]);
+    const d = dpr();
+    rects.push([(r.left - pad) * d, (r.top - pad) * d, (r.right + pad) * d, (r.bottom + pad) * d]);
   };
 
-  document.querySelectorAll('#stage .surface').forEach(push);
+  document.querySelectorAll('#stage .surface').forEach((el) => push(el));
   const bar = $('#editbar');
-  if (bar && !bar.hidden) push(bar);
+  if (bar && !bar.hidden) push(bar, 24);
   const menu = $('#menu');
-  if (menu && !menu.hidden) push(menu);
+  if (menu && !menu.hidden) push(menu, 24);
   const trayMenu = $('#traymenu');
-  if (trayMenu && !trayMenu.hidden) push(trayMenu.firstElementChild || trayMenu);
+  if (trayMenu && !trayMenu.hidden) push(trayMenu.firstElementChild || trayMenu, 24);
 
   // 右键菜单不开「整窗接管」：它只是热区之一。菜单外的空白要能穿透回桌面，
   // 这样在空白处点右键，桌面自己的菜单会照常弹出来（和别的桌面软件一致），
   // 我们的菜单则靠后端的「菜单外点击」检测收起（见 set_menu_rect）。
-  const force = S.edit || S.force || S.trayMenu;
-  invoke('set_hit_regions', { rects, force: !!force }).catch(() => {});
+  // 窗口是按这些矩形裁出来的（见后端 apply_window_region）：只画不收鼠标的东西
+  // 也要报上去，漏一个就被整块裁掉。toast 属于这一类。
+  const paint = [];
+  const toast = $('#toast');
+  if (toast && !toast.hidden) {
+    const r = toast.getBoundingClientRect();
+    if (r.width >= 3 && r.height >= 3) {
+      const d = dpr();
+      paint.push([(r.left - 20) * d, (r.top - 20) * d, (r.right + 20) * d, (r.bottom + 20) * d]);
+    }
+  }
+
+  // 托盘菜单不算「整窗接管」了：菜单盒本身就在 rects 里，窗口只覆盖它。
+  // 整窗接管等于把窗口恢复成整屏，视频立刻又开始卡（见 apply_window_region）。
+  const force = S.edit || S.force;
+  invoke('set_hit_regions', { rects, paint, force: !!force }).catch(() => {});
 }
 
 /** 写入配置。后端返回它最终采纳的那份（含新的 rev），
@@ -1379,8 +1400,13 @@ function toast(msg) {
   const el = $('#toast');
   el.textContent = msg;
   el.hidden = false;
+  // 窗口只保留报上去的区域，弹出和收起都要立刻让窗口跟着变，否则 toast 会被裁掉
+  scheduleHit();
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), 2000);
+  toastTimer = setTimeout(() => {
+    el.hidden = true;
+    scheduleHit();
+  }, 2000);
 }
 
 /* ============================ 全局事件 ============================ */
@@ -1478,7 +1504,6 @@ function bindGlobalEvents() {
     trayMenuOpen = false;
     trayHost.hidden = true;
     S.trayMenu = false;
-    S.force = false;
     document.removeEventListener('mousedown', trayOutside, true);
     document.removeEventListener('keydown', trayEsc, true);
     // 通知后端停止「菜单外点击」监听
@@ -1629,8 +1654,9 @@ function bindGlobalEvents() {
       };
     }
     S.trayMenu = true;
-    // 菜单开着时整窗必须可点（平时穿透）：updateHit 的 force 会放行
-    S.force = true;
+    // 不整窗接管：托盘菜单要一直挂在那儿几秒到几十秒，整窗接管等于把窗口
+    // 恢复成整屏透明，下面放视频又开始掉帧。菜单盒已经是热区，窗口只盖它；
+    // 菜单外的点击由后端盯全局按键（set_menu_rect → menu:outside）收起。
     updateHit();
     // 托盘点击本身不在文档流里，mousedown 监听下一拍再挂也无妨；
     // 用捕获阶段，防止菜单内按钮的 mousedown 冒泡误关

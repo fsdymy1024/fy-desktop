@@ -176,8 +176,9 @@ pub fn run() {
             }
             app.manage(state);
 
-            // 默认穿透，光标压到卡片上才由守卫线程接管
-            let _ = win.set_ignore_cursor_events(true);
+            // 不再用 set_ignore_cursor_events 做穿透：它靠 WS_EX_LAYERED，和窗口区域
+            // 一起用会在窗口顶部漏出一条浅色横杠，而且每次开关都让 DWM 重算合成。
+            // 现在窗口被裁成组件区域，区域外的点击本来就落不到我们身上。
 
             // 注意：这里**不能**给窗口设 WDA_EXCLUDEFROMCAPTURE。
             // 那个开关是「对所有截图工具隐形」，常开的话用户一截图组件就消失
