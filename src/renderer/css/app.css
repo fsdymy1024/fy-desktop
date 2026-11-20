@@ -94,7 +94,12 @@ button {
   border-radius: var(--radius);
   background: var(--fill);
   border: 1px solid var(--stroke);
-  box-shadow: var(--shadow), var(--edge), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  /* 顶亮线已经在 --edge 的第一条里了，这里不能再补一条 inset 高光：
+     两条 insets 会叠成近白的实心亮条（0.30 + 0.55 ≈ 0.69），顶边比其余三边
+     亮将近四倍，而且 inset 的偏移在圆角处会被拉厚，四个角上溢出圆角弧线，
+     看着就像贴着顶边的白方块。暮色 / 石墨材质的 box-shadow 是整条覆盖的，
+     本来就没有这条，玻璃材质跟着它们保持一致即可。 */
+  box-shadow: var(--shadow), var(--edge);
   /* 组件级材质：每张卡用自己 data-material 里的 --ink。
      color 必须在这里显式解析，否则会继承 body 的颜色（全局材质），
      暮色/石墨卡就会出现深底深字。 */
@@ -1860,8 +1865,10 @@ body[data-edit="1"] .grip {
 
 /* ---- 托盘自绘菜单 ----
    原生 Win32 托盘菜单改掉了：系统样式的字体（微软雅黑）和配色既跟组件的
-   MiSans 对不上，也没法跟随材质。#traymenu 是全屏透明层，菜单盒 .tm 用和
-   右键菜单同一族视觉（--pop-* 跟材质走，--font 跟组件走）。 */
+   MiSans 对不上，也没法跟随材质。菜单现在住在独立小窗 traypop 里
+   （traymenu.html，窗口本身 alwaysOnTop），这套规则同时被那个窗口的
+   css/app.css 复用：#traymenu 铺满小窗，菜单盒 .tm 由 JS 放在留白的左上角
+   （四周那圈透明边是给投影留的）。视觉和右键菜单同族（--pop-* 跟材质走）。 */
 #traymenu {
   position: fixed;
   inset: 0;

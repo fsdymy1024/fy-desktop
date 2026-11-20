@@ -445,6 +445,11 @@ v1.1 把 4.3.5 那三个浮层整体搬进独立的 `hub` 窗口。动机不是�
 `alwaysOnBottom: false`、`skipTaskbar: false`。尺寸与位置由前端按屏宽算（见 4.3.6），
 窗口本身只负责 `show` / `hide`。
 
+> **`decorations: false` 不等于「没有标题栏」**：实测窗口样式仍是 `0x14CB0000`
+> （`WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX`），就是「有完整标题栏、
+> 只是拉不动边框」。启动时统一过一遍 `window::strip_caption()`，清掉 caption 一族样式
+> 并补 `WS_POPUP`——`main` / `hub` / `traypop` 三个窗口都做，详见 9.41。
+
 启动链路：`setup` → 铺满主屏 → `exclude_from_capture` → 建托盘 → 起采样 → 保持隐藏；
 前端 `boot()` 拿配置/布局/玻璃 → 渲染 → `ui_ready` → 后端 `show()` + `SW_SHOWNOACTIVATE`。
 
@@ -787,6 +792,24 @@ Tauri 的 `set_ignore_cursor_events(true)` 没有 Electron 的 `forward: true`�
     `trayleft` / `traytop`（分别模拟任务栏贴四条边，`traymenu` 是 `traybottom` 的旧名）
     配合 `FY_SHOT` 出图，再看 dump 里 `probe.tray` 记下的菜单尺寸与落点。0.5 倍缩放的自绘菜单在 4K 上很小，只靠肉眼容易看错，
     数值对得上才算过。
+
+41. **`decorations: false` 摘不掉标题栏，白条会在「层级一变」时从区域顶边冒出来** →
+    「点一下组件、点别的窗口、点桌面，组件上边缘就出现一条白条，右上角还带着
+    最小化 / 最大化 / 关闭」，那三个按钮就是标题栏本人。实测主窗口样式
+    `0x14CB0000` = `WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX |
+    WS_VISIBLE | WS_CLIPSIBLINGS`：`decorations: false` 只摘了 `WS_THICKFRAME`，
+    `WS_CAPTION` 一直在。铺满全屏时标题栏正好压在屏幕顶上、被当成屏幕边缘；
+    窗口一裁成区域，标题栏就只能从区域矩形里露头，而且**系统只在窗口被激活时
+    才画它**——所以表现成「层级一变就冒白条」。那片 GDI 区域 WebView 层不会重画，
+    白条于是长期留在那儿，直到碰巧有一次重绘。
+    排查三件套：抓屏取像素比对（正常 `48,62,84`，出白条时 `91,108,132`，圆角缺口处
+    直接是纯白）；`RedrawWindow(RDW_INVALIDATE|RDW_NOERASE|RDW_UPDATENOW)` 之后
+    白条消失（证明是「画上去没被抹掉」而不是布局错）；`GetWindowLongPtr(GWL_STYLE)`
+    打印样式，一眼看穿。修法是启动时 `strip_caption()`：清 caption 一族样式、
+    补 `WS_POPUP`、`SWP_FRAMECHANGED` 重算非客户区，`main` / `hub` / `traypop`
+    都得做（`hub` 一样带 caption，激活时也会在自己顶上露白条）。
+    顺手的好处：屏幕最上面那约 23 CSS px 从「标题栏」变回客户区，点那里不会再
+    拖动 / 激活窗口。
 
 ## 10. 后续路线
 

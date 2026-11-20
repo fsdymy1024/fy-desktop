@@ -141,7 +141,6 @@ function dumpLayout(S) {
       },
       // 组件库 / 关于 / 天气弹层都在控制中心（独立窗口）里，主窗口只留全局材质
       floats: { body: document.body.dataset.material },
-      probe: { tray: S.trayProbe || null },
       err: S.err || '',
       bridge: dbg,
       shot: !!S.shot
@@ -232,6 +231,6 @@ export function installDebug(S, api) {
     }, 500);
   }
 
-  // 托盘菜单探针由 main.js 里的 trayMenuProbe 自己跑（它要复用闭包内的状态）
+  // 托盘菜单已经搬进独立小窗（traymenu.html），不走这里的探针
   return { dump };
 }

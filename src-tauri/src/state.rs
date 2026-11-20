@@ -22,10 +22,14 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct HitState {
     /// 需要接收鼠标的区域，物理像素、屏幕坐标
     pub regions: Vec<[f64; 4]>,
+    /// 只用来「画」的区域（临时浮层，如 toast）。窗口被裁成区域窗口后，
+    /// 不在这里报上来的东西会被整块裁掉——看得见但点不到，和看不见是两回事。
+    pub paint: Vec<[f64; 4]>,
+    /// 已经设到窗口上的区域（窗口内坐标、物理像素）。None = 没设区域（整窗）。
+    /// 用来挡掉重复的 SetWindowRgn：每调一次 DWM 都要重算一次合成。
+    pub applied: Option<Vec<[i32; 4]>>,
     /// 前端强制接管（拖拽、编辑、组件库打开时）
     pub force: bool,
-    /// 当前是否处于穿透状态，只在变化时才调系统 API
-    pub ignoring: bool,
     /// 托盘菜单的矩形（物理像素）。Some 时后台轮询全局左键，
     /// 落在它外面就推 `menu:outside` 让前端收起菜单——
     /// 点在别的应用或任务栏上时，我们的窗口根本收不到事件，只能靠后端。
@@ -51,6 +55,10 @@ pub struct AppState {
     pub hit: Mutex<HitState>,
     /// 设计坐标系尺寸（= 窗口 CSS 像素 / 缩放）
     pub design: Mutex<(f64, f64)>,
+    /// 托盘菜单小窗还没加载完时先攒着的「打开菜单」请求。
+    /// 开机后头一两秒点托盘图标时，`traypop` 的 WebView 可能还没跑起来，
+    /// 只发事件会丢——攒一份，等它 ready 再补发（见 `tray::open_menu`）。
+    pub tray_pending: Mutex<Option<serde_json::Value>>,
 }
 
 impl AppState {
@@ -60,6 +68,7 @@ impl AppState {
             scale: Mutex::new(1.0),
             hit: Mutex::new(HitState::default()),
             design: Mutex::new((1920.0, 1080.0)),
+            tray_pending: Mutex::new(None),
         }
     }
 

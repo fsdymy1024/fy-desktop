@@ -28,6 +28,25 @@
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows"
       },
       {
+        "label": "traypop",
+        "title": "fy-desktop tray",
+        "url": "traymenu.html",
+        "width": 220,
+        "height": 300,
+        "transparent": true,
+        "decorations": false,
+        "resizable": false,
+        "focus": false,
+        "focusable": false,
+        "visible": false,
+        "shadow": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#00000000",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows"
+      },
+      {
         "label": "hub",
         "title": "fy-desktop 控制中心",
         "url": "hub.html",

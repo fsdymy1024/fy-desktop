@@ -11,6 +11,13 @@
  */
 setTimeout(function () {
   if (document.body.dataset.ready === '1') return;
+  // 窗口可能已经被裁成「只剩组件」的区域了，这块错误屏是铺满全屏的：
+  // 先让后端把区域清掉（force），否则提示会被自己裁掉，只剩几个字。
+  try {
+    window.__TAURI__?.core?.invoke('set_hit_regions', { rects: [], paint: [], force: true });
+  } catch (e) {
+    /* 兜底屏自己不能再抛错 */
+  }
   document.body.innerHTML =
     '<div style="position:fixed;inset:0;display:grid;place-items:center;' +
     'background:rgba(20,14,10,.92);color:#ffd9c7;font:12.5px/1.8 ui-monospace,Consolas,monospace;padding:40px">' +

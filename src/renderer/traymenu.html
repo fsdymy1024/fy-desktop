@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>fy-desktop tray</title>
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+
+<!--
+  托盘右键菜单的宿主窗口（label = traypop）。
+
+  菜单以前画在主窗口里，而主窗口是 alwaysOnBottom 的桌面层，被别的窗口压住时
+  菜单也跟着看不见。现在它有自己的窗口：alwaysOnTop + 透明 + 无边框 + 不可聚焦，
+  行为对齐系统托盘菜单；主窗口和桌面组件都不再需要为了菜单临时抬层。
+
+  样式直接复用 css/app.css：.tm 用的是同一套 --pop-*（跟着全局材质变）和 --font。
+-->
+
+<body data-material="glass">
+  <div id="traymenu" hidden></div>
+  <script type="module" src="js/traymenu.js"></script>
+</body>
+
+</html>
