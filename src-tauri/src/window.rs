@@ -371,6 +371,60 @@ pub fn set_regions(state: &AppState, rects: Vec<[f64; 4]>, paint: Vec<[f64; 4]>,
     }
 }
 
+/// 摘掉窗口的标题栏（caption）样式。
+///
+/// `decorations: false` 在 Windows 上只摘掉了可拖拽边框，`WS_CAPTION` 还在：
+/// 实测主窗口样式是 `0x14CB0000` = `WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX |
+/// WS_MAXIMIZEBOX | WS_VISIBLE | WS_CLIPSIBLINGS`，等于一个「有完整标题栏、
+/// 只是拉不动边框」的窗口。
+///
+/// 铺满全屏时这个标题栏看不出来（它正好压在屏幕最顶上，被当成屏幕边缘）；
+/// 可窗口被裁成区域之后，标题栏就只能从区域矩形里露头——**窗口一被激活
+/// （点组件、点别的窗口再点回来、点桌面再点回来），区域顶边就浮出一条白条，
+/// 右上角还能看到最小化 / 最大化 / 关闭三个按钮**。WebView 层不重画那一块，
+/// 白条就一直留着，直到碰巧有一次重绘才消失，这就是「层级一变就冒白条」。
+///
+/// 修法是彻底不要非客户区：清掉 caption 一族样式、补上 `WS_POPUP`，再用
+/// `SWP_FRAMECHANGED` 让系统重算一次非客户区。窗口依旧铺满全屏、依旧在桌面层。
+#[cfg(windows)]
+pub fn strip_caption(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+    };
+
+    let h = HWND(hwnd as *mut _);
+    unsafe {
+        let style = GetWindowLongPtrW(h, GWL_STYLE) as u32;
+        let kill = WS_CAPTION.0
+            | WS_THICKFRAME.0
+            | WS_SYSMENU.0
+            | WS_MINIMIZEBOX.0
+            | WS_MAXIMIZEBOX.0;
+        let want = (style & !kill) | WS_POPUP.0;
+        if want == style {
+            return;
+        }
+        // 改样式不会自己生效，必须 SWP_FRAMECHANGED 让系统把非客户区重算一遍
+        SetWindowLongPtrW(h, GWL_STYLE, want as isize);
+        let _ = SetWindowPos(
+            h,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        println!("[window] 去掉标题栏：0x{style:08X} → 0x{want:08X}");
+    }
+}
+
+#[cfg(not(windows))]
+pub fn strip_caption(_hwnd: isize) {}
+
 /// 去掉 DWM 给窗口画的那一圈边框与圆角（Windows 11 才有）。
 ///
 /// 无边框弹窗本来不该有可见边框，但 Win11 会给每个顶层窗口画 1px 边框：

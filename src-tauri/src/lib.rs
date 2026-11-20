@@ -138,6 +138,15 @@ pub fn run() {
                 .get_webview_window("main")
                 .expect("主窗口必须在配置里声明");
 
+            // 先把三个窗口的标题栏样式摘干净（见 window::strip_caption）。
+            // 必须赶在第一次裁区域之前做：decorations:false 并没有真的去掉
+            // WS_CAPTION，窗口一激活标题栏就会从区域矩形顶上露成一条白条。
+            for label in ["main", "hub", "traypop"] {
+                if let Some(w) = app.get_webview_window(label) {
+                    window::strip_caption(commands::hwnd_of(&w));
+                }
+            }
+
             window::fill_screen(&win)?;
 
             // 多屏尚未支持：只铺主屏。所有「主屏假设」都收敛在 fill_screen 里，
