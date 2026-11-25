@@ -19,6 +19,28 @@ export function speed(bytes) {
   return { v: (b / 1073741824).toFixed(2), u: 'GB/s' };
 }
 
+/**
+ * 网卡协商速率：bps → 紧凑文本。
+ * 卡片上位置很窄，所以单位缩成单字母（100M / 1G / 2.5G），
+ * 完整写法放在 `full` 里给 tooltip 用。取不到（0）返回空串，调用方据此隐藏。
+ */
+export function linkRate(bps) {
+  const b = Math.max(0, Number(bps) || 0);
+  if (b <= 0) return { v: '', u: '', full: '' };
+  if (b < 1e6) {
+    const k = Math.round(b / 1e3);
+    return { v: String(k), u: 'K', full: `${k} Kbps` };
+  }
+  if (b < 1e9) {
+    const m = Math.round(b / 1e6);
+    return { v: String(m), u: 'M', full: `${m} Mbps` };
+  }
+  // 1 Gbps 不写成「1.0G」，2.5 Gbps 这种才保留一位小数
+  const g = b / 1e9;
+  const v = g >= 10 ? String(Math.round(g)) : g.toFixed(1).replace(/\.0$/, '');
+  return { v, u: 'G', full: `${v} Gbps` };
+}
+
 /** 走势图：fixedMax 给了就用固定量程，否则自适应并留 12% 顶部余量 */
 export function spark(values, w, h, pad = 2, fixedMax = 0) {
   const vals = (values || []).filter((v) => Number.isFinite(v));

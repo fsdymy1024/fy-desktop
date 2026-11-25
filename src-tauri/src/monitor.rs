@@ -41,6 +41,9 @@ pub struct Metrics {
     pub ip: String,
     /// IP 所属网卡名（如「WLAN」「以太网」），让「这是哪块网卡的地址」一眼可见
     pub iface: String,
+    /// 出口网卡的协商速率（bps），0 表示取不到。
+    /// 有线是自协商结果（100M / 1G / 2.5G），Wi-Fi 是当前物理层速率。
+    pub link_speed: u64,
     pub link: Link,
     pub down_history: Vec<u64>,
 }
@@ -219,6 +222,25 @@ fn scan_ip(nets: &Networks) -> (String, String) {
     fallback.unwrap_or_default()
 }
 
+/// 出口网卡的协商速率（bps）。
+///
+/// `sysinfo` 在 Windows 上读的就是 `MIB_IF_ROW2` 的链路速率：有线是自协商结果，
+/// Wi-Fi 是当前物理层速率（会随信号 / 频段变化）。接收与发送各取一次、取大的那个，
+/// 个别无线网卡只报其中一边。取不到（刚断线、驱动不报）返回 0，前端显示「--」。
+fn link_speed(nets: &Networks, iface: &str) -> u64 {
+    if iface.is_empty() {
+        return 0;
+    }
+    nets.iter()
+        .find(|(name, _)| name.to_string_lossy() == iface)
+        .map(|(_, data)| {
+            data.transmit_link_speed()
+                .unwrap_or(0)
+                .max(data.receive_link_speed().unwrap_or(0))
+        })
+        .unwrap_or(0)
+}
+
 fn disk_usage(disks: &Disks) -> f32 {
     let mut best: Option<(u64, u64)> = None;
     for d in disks.iter() {
@@ -323,6 +345,7 @@ pub fn spawn(app: AppHandle) {
 
             let total_mem = sys.total_memory().max(1);
             let (ip, iface) = net_identity(&nets);
+            let rate = link_speed(&nets, &iface);
             let metrics = Metrics {
                 cpu: sys.global_cpu_usage().clamp(0.0, 100.0),
                 mem: (sys.used_memory() as f64 / total_mem as f64 * 100.0) as f32,
@@ -334,14 +357,21 @@ pub fn spawn(app: AppHandle) {
                 latency: LATENCY.load(Ordering::Relaxed),
                 ip,
                 iface,
+                link_speed: rate,
                 link: wifi_link(),
                 down_history: history.iter().copied().collect(),
             };
 
             if tick == 1 {
                 eprintln!(
-                    "[monitor] 首帧 cpu={:.1} mem={:.1} disk={:.1} down={:.0} ip={} iface={}",
-                    metrics.cpu, metrics.mem, metrics.disk, metrics.down, metrics.ip, metrics.iface
+                    "[monitor] 首帧 cpu={:.1} mem={:.1} disk={:.1} down={:.0} ip={} iface={} speed={}",
+                    metrics.cpu,
+                    metrics.mem,
+                    metrics.disk,
+                    metrics.down,
+                    metrics.ip,
+                    metrics.iface,
+                    metrics.link_speed
                 );
             }
             match app.emit("metrics", &metrics) {

@@ -582,14 +582,37 @@ body[data-glass="0"] .surface::before {
   border-radius: 6px;
   padding: 2px 6px;
   max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 徽标 = 链路图标 + 协商速率。图标自己说明「无线 / 有线 / 未连接」，
+   文字信息（SSID、完整速率）挪到 title 里，不再占用这一行 */
+.net-link .ic {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+}
+
+.net-link .rate {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 拿不到速率时整段收起，只留图标 */
+.net-link .rate:empty {
+  display: none;
+}
+
+/* 未连接：压成辅助色，别和「有线 / 无线」抢注意力 */
+.net-link.off {
+  color: var(--ink3);
+}
+
 .net-link svg {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   flex: 0 0 auto;
 }
 
@@ -678,6 +701,26 @@ body[data-glass="0"] .surface::before {
 
 .net-foot .ip {
   margin-left: auto;
+  /* IP 是精确值，长了宁可让名称先截断，也不能把 IP 截成「192.16…」 */
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 「信号 ▂▄▆█ Office-5G」是一个整体：名称紧贴信号格，太长就自己截断 */
+.sigwrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sigwrap .sig-lab {
+  font-style: normal;
+}
+
+.sigwrap .ssid {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -995,6 +1038,11 @@ body[data-glass="0"] .surface::before {
 
 .card[data-kind="network"][data-size="s"] .net-link {
   max-width: 42px;
+}
+
+/* 小号只有 102 宽，徽标放不下「链路 + 速率」两段，速率让位 */
+.card[data-kind="network"][data-size="s"] .net-link .rate {
+  display: none;
 }
 
 .card[data-kind="network"][data-size="l"] .net-mid {

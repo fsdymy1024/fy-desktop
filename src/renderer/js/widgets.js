@@ -4,7 +4,7 @@
  * mount() 返回可选的 weather/metrics/tick 回调与 destroy()。
  */
 
-import { esc, pad2, speed, spark, wxIcon, WEEK } from './util.js';
+import { esc, linkRate, pad2, speed, spark, wxIcon, WEEK } from './util.js';
 
 /** 预设尺寸（设计像素）。和后端 config.rs 的 dims() 是同一套数：
  *  小 102×102、中 210×102、大 210×126。
@@ -360,17 +360,25 @@ export const REGISTRY = {
   network: {
     kind: 'network',
     name: '网络',
-    desc: '上下行速率、延迟、信号与 IP',
+    desc: '上下行速率、协商速率、延迟、信号、无线名称与 IP',
     sizes: ['s', 'm'],
     def: 'm',
     preview: (size) =>
       size === 's' ? `<b>12.4</b><span>MB/s</span>` : `<b>12.4</b><span>MB/s · 18ms</span>`,
     mount(body) {
+      // 右上角只放图标：无线 / 有线 / 未连接三态一眼可辨，字数留给协商速率。
+      // 具体是哪条链路、哪个 SSID、完整速率写在徽标的 title 里。
+      const NET_ICON = {
+        wifi: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2.5 8.6a15 15 0 0 1 19 0"/><path d="M6 12.5a10 10 0 0 1 12 0"/><path d="M9.4 16.3a5 5 0 0 1 5.2 0"/><circle cx="12" cy="19.7" r="1.2" fill="currentColor" stroke="none"/></svg>`,
+        ethernet: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20.5h7"/></svg>`,
+        none: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2.5 8.6a15 15 0 0 1 6-3.6"/><path d="M15.5 5.1a15 15 0 0 1 6 3.5"/><path d="M6 12.5a10 10 0 0 1 3.2-2"/><path d="M15 10.6a10 10 0 0 1 3 1.9"/><path d="M9.4 16.3a5 5 0 0 1 5.2 0"/><circle cx="12" cy="19.7" r="1.2" fill="currentColor" stroke="none"/><path d="M4 20.5L20 3.5"/></svg>`
+      };
+
       body.innerHTML = `
         <div class="net-top">
           <span>网络</span>
           <span class="net-on"><i></i>在线</span>
-          <span class="net-link"><span class="txt">连接中</span></span>
+          <span class="net-link"><i class="ic"></i><b class="rate"></b></span>
         </div>
         <div class="net-mid">
           <div class="net-main">
@@ -381,7 +389,7 @@ export const REGISTRY = {
         </div>
         <div class="net-foot">
           <span>延迟 <b class="lat">--</b> ms</span>
-          <span class="sigwrap">信号 <span class="sig"><i></i><i></i><i></i><i></i></span></span>
+          <span class="sigwrap"><em class="sig-lab">信号</em><span class="sig"><i></i><i></i><i></i><i></i></span><span class="ssid"></span></span>
           <span class="ip"></span>
         </div>`;
 
@@ -393,9 +401,16 @@ export const REGISTRY = {
       const lat = q('.lat');
       const ip = q('.ip');
       const sparkEl = q('.net-spark');
-      const link = q('.net-link .txt');
+      const linkBadge = q('.net-link');
+      const linkIcon = q('.net-link .ic');
+      const rate = q('.net-link .rate');
+      const onDot = q('.net-on');
       const sigWrap = q('.sigwrap');
+      const sigLab = q('.sig-lab');
+      const ssid = q('.ssid');
       const bars = body.querySelectorAll('.sig i');
+      // 图标只在链路类型变化时重画：每秒重建一次 SVG 会白烧解析
+      let kindNow = '';
 
       const drawSpark = (hist) => {
         const w = sparkEl.clientWidth || 92;
@@ -431,11 +446,39 @@ export const REGISTRY = {
           ip.title = s.iface ? `${s.iface} · ${s.ip}` : s.ip || '';
 
           const l = s.link || {};
-          link.textContent = l.kind === 'wifi' ? l.ssid || 'Wi-Fi' : l.kind === 'ethernet' ? '有线' : '未连接';
-          if (l.kind === 'wifi' && Number.isFinite(l.signal)) {
+          const kind = l.kind === 'wifi' ? 'wifi' : l.kind === 'ethernet' ? 'ethernet' : 'none';
+          const wifi = kind === 'wifi';
+
+          // 右上角：链路图标 + 协商速率（有线是自协商结果，Wi-Fi 是当前物理层速率）。
+          // 取不到速率就只剩图标，CSS 用 :empty 把它收起，不留空档
+          const r = linkRate(s.link_speed);
+          rate.textContent = r.v ? `${r.v}${r.u}` : '';
+          if (kind !== kindNow) {
+            linkIcon.innerHTML = NET_ICON[kind];
+            linkBadge.classList.toggle('off', kind === 'none');
+            // 断网时再挂一个绿点「在线」自相矛盾，整块收掉
+            onDot.style.display = kind === 'none' ? 'none' : '';
+            kindNow = kind;
+          }
+
+          // 徽标里没有文字了，具体链路 / SSID / 完整速率改到悬停里看
+          const parts = [];
+          if (wifi) parts.push('Wi-Fi', l.ssid);
+          else parts.push(kind === 'ethernet' ? '有线' : '未连接');
+          if (r.full) parts.push(`协商速率 ${r.full}`);
+          linkBadge.title = parts.filter(Boolean).join(' · ');
+
+          if (wifi) {
             sigWrap.style.display = '';
-            const on = Math.max(1, Math.ceil(l.signal / 25));
+            const on = Number.isFinite(l.signal) ? Math.max(1, Math.ceil(l.signal / 25)) : 0;
             bars.forEach((b, i) => b.classList.toggle('on', i < on));
+            // 无线名称跟在信号格后面：右上角腾出来只放图标 + 速率。
+            // 有名称时省掉「信号」二字（信号格本身就能说明），把宽度让给名称与 IP——
+            // 一行 184px 塞不下「延迟 + 信号 + 名称 + IP」四段
+            ssid.textContent = l.ssid || '';
+            ssid.title = l.ssid || '';
+            ssid.style.display = l.ssid ? '' : 'none';
+            sigLab.style.display = l.ssid ? 'none' : '';
           } else {
             // 有线上没有「信号」这个概念，整块隐藏比显示满格更诚实
             sigWrap.style.display = 'none';
