@@ -11,7 +11,7 @@
  */
 
 import { invoke, invokeRetry, listen } from './bridge.js';
-import { REGISTRY, ORDER, SIZE_LABEL, dimsOf } from './widgets.js';
+import { REGISTRY, ORDER, SIZE_LABEL, dimsOf, launcherSvg } from './widgets.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -24,7 +24,7 @@ const MATERIALS = [
   ['solid', '石墨', '中性深灰，不抓屏、最省']
 ];
 const MAT_NAME = { glass: '玻璃', dusk: '暮色', solid: '石墨' };
-const VIEWS = ['widgets', 'gallery', 'settings', 'groups', 'about'];
+const VIEWS = ['widgets', 'gallery', 'settings', 'groups', 'launcher', 'docs', 'about'];
 const MATERIAL_KEYS = ['glass', 'dusk', 'solid'];
 
 const H = {
@@ -33,6 +33,8 @@ const H = {
   root: '',
   autostart: false,
   palette: [],
+  /// 后端下发的系统入口白名单，卡片和控制中心共用
+  entries: [],
   view: 'widgets',
   size: 'm',
   viewData: null,
@@ -58,6 +60,7 @@ async function boot() {
   H.root = b.root || '';
   H.autostart = !!b.autostart;
   H.palette = Array.isArray(b.palette) ? b.palette : [];
+  H.entries = Array.isArray(b.launcher_entries) ? b.launcher_entries : [];
 
   restorePosition();
   applyMaterial();
@@ -184,6 +187,7 @@ function renderAll() {
   renderWidgets();
   renderGallery();
   renderSettings();
+  renderLauncherFavorites();
   renderGroups();
   renderAbout();
   renderSide();
@@ -200,7 +204,8 @@ function cfgSig(c) {
     c?.show_labels,
     c?.show_seconds,
     c?.scale,
-    c?.weather
+    c?.weather,
+    c?.launcher_favorites
   ]);
 }
 
@@ -370,6 +375,82 @@ function renderSettings() {
   renderSwitches();
 }
 
+function renderLauncherFavorites() {
+  const picked = $('#launcher-picked');
+  const all = $('#launcher-all');
+  if (!picked || !all) return;
+  const favs = Array.isArray(H.cfg?.launcher_favorites) ? H.cfg.launcher_favorites : [];
+  const entries = Array.isArray(H.entries) ? H.entries : [];
+  const byId = (id) => entries.find((e) => e.id === id);
+  const counter = $('#launcher-count');
+  if (counter) counter.textContent = `${favs.length} / 10`;
+
+  picked.innerHTML = favs.length
+    ? favs
+        .map((id, i) => {
+          const e = byId(id);
+          if (!e) return '';
+          return `<div class="fav-row">
+            <span class="fav-ico">${launcherSvg(e.icon)}</span>
+            <span class="idx">${i + 1}</span>
+            <span class="fav-name">${esc(e.name)}<small>${esc(e.cmd)}</small></span>
+            <span class="ops">
+              <button data-launch-move="-1" data-launch-id="${esc(id)}" ${i === 0 ? 'disabled' : ''} title="上移">↑</button>
+              <button data-launch-move="1" data-launch-id="${esc(id)}" ${i === favs.length - 1 ? 'disabled' : ''} title="下移">↓</button>
+              <button data-launch-toggle="${esc(id)}" title="移出常用位">×</button>
+            </span>
+          </div>`;
+        })
+        .join('')
+    : `<div class="fav-empty">还没有常用项，从下面挑 10 个。</div>`;
+
+  all.innerHTML = entries
+    .map((e) => {
+      const on = favs.includes(e.id);
+      return `<button class="all-entry ${on ? 'on' : ''}" data-launch-toggle="${esc(e.id)}">
+        <span class="dotmark">${on ? '✓' : '+'}</span>
+        <span class="nm">${esc(e.name)}<small>${esc(e.desc)}</small></span>
+        <span class="tag">${esc(e.cat)}</span>
+      </button>`;
+    })
+    .join('');
+}
+
+async function saveLauncherFavorites(list) {
+  try {
+    await invoke('set_launcher_favorites', { favorites: list });
+    H.cfg.launcher_favorites = list;
+    renderLauncherFavorites();
+    return true;
+  } catch (e) {
+    toast(`保存常用项失败：${e?.message || e}`);
+    return false;
+  }
+}
+
+async function toggleLauncherEntry(id) {
+  const favs = [...(H.cfg.launcher_favorites || [])];
+  const i = favs.indexOf(id);
+  if (i >= 0) {
+    favs.splice(i, 1);
+  } else {
+    if (favs.length >= 10) return toast('最多 10 个常用位，先移出一个再加');
+    favs.push(id);
+  }
+  if (await saveLauncherFavorites(favs)) toast(i >= 0 ? '已移出常用位' : '已加入常用位');
+}
+
+async function moveLauncherEntry(id, delta) {
+  const favs = [...(H.cfg.launcher_favorites || [])];
+  const i = favs.indexOf(id);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= favs.length) return;
+  const tmp = favs[i];
+  favs[i] = favs[j];
+  favs[j] = tmp;
+  await saveLauncherFavorites(favs);
+}
+
 function renderGroups() {
   const list = $('#grouplist');
   if (!list) return;
@@ -470,6 +551,12 @@ function bindEvents() {
     const card = e.target.closest('.gcard');
     if (card) return addWidget(card.dataset.kind);
 
+    // 系统入口常用项
+    const toggleEntry = e.target.closest('[data-launch-toggle]');
+    if (toggleEntry) return toggleLauncherEntry(toggleEntry.dataset.launchToggle);
+    const moveEntry = e.target.closest('[data-launch-move]');
+    if (moveEntry) return moveLauncherEntry(moveEntry.dataset.launchId, Number(moveEntry.dataset.launchMove));
+
     // 具体动作
     const actEl = e.target.closest('[data-act]');
     if (!actEl) return;
@@ -477,7 +564,10 @@ function bindEvents() {
     const id = actEl.dataset.id;
 
     if (act === 'add') return setView('gallery');
-    if (act === 'layout') return editLayout();
+    if (act === 'launcher-reset') {
+      if (await saveLauncherFavorites([])) toast('已恢复默认 10 个常用项');
+      return;
+    }
     if (act === 'weather') return openWeatherDialog();
     if (act === 'new-group') return openGroupDialog('create');
     if (act === 'refresh-glass') {
@@ -587,15 +677,10 @@ function addWidget(kind) {
   toast(`已添加「${def?.name || kind}」${SIZE_LABEL[H.size]}号`);
 }
 
-function editLayout() {
-  send({ type: 'edit-layout' });
-  hideHub();
-}
-
 function setMaterial(mat) {
   if (!MATERIAL_KEYS.includes(mat) || mat === H.cfg.material) return;
   H.cfg.material = mat;
-  // 换材质只是换一组 CSS 变量。整窗重绘（五个页面 + 21 张预览卡 + 分组列表）
+  // 换材质只是换一组 CSS 变量。整窗重绘（所有页面 + 21 张预览卡 + 分组列表）
   // 除了让点击迟滞一下没有别的收益，这里只刷材质行自己的选中态。
   applyMaterial();
   renderMaterialRows();

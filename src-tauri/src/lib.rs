@@ -11,6 +11,7 @@ pub mod consts;
 pub mod desktop;
 pub mod geo;
 pub mod http;
+pub mod launcher;
 pub mod monitor;
 pub mod state;
 pub mod tray;
@@ -104,6 +105,8 @@ pub fn run() {
             commands::open_config_dir,
             commands::open_url,
             commands::open_system,
+            commands::open_launcher_entry,
+            commands::set_launcher_favorites,
             commands::move_into,
             commands::move_out,
             commands::tidy_preview,

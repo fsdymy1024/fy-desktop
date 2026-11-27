@@ -44,6 +44,14 @@
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 5.5v7h11v-7"/><path d="M2 5.5l1.6-2h3l1 1.4h5.3l1.1 1.6"/></svg>
           收纳文件夹<span class="badge" id="nav-groups">0</span>
         </button>
+        <button class="nav" data-view="launcher">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 3.5h4v4H3zM9 3.5h4v4H9zM3 9.5h4v3H3zM9 9.5h4v3H9z"/></svg>
+          系统入口
+        </button>
+        <button class="nav" data-view="docs">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3M6 8h4M6 10.5h4"/></svg>
+          使用文档
+        </button>
         <button class="nav" data-view="about">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="5.6"/><path d="M8 7.2v3.6"/><circle cx="8" cy="5.4" r=".7" fill="currentColor" stroke="none"/></svg>
           关于
@@ -67,7 +75,6 @@
               <p>桌面上的小组件都在这里管理。改动即时生效，不需要重启。</p>
             </div>
             <div class="acts">
-              <button class="btn" data-act="layout">调整桌面布局</button>
               <button class="btn primary" data-act="add">＋ 添加组件</button>
             </div>
           </div>
@@ -180,6 +187,99 @@
             <div class="hintline">
               <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 7.4v3.4M8 5.2v.2" stroke-linecap="round"/></svg>
               材质、缩放对桌面组件、收纳面板和这个窗口同时生效。
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== 系统入口 ========== -->
+        <section class="page page-launcher">
+          <div class="head">
+            <div>
+              <h2>系统入口</h2>
+              <p>挑 10 个常用入口放到桌面卡片上，点一下直达 Windows 对应功能。</p>
+            </div>
+            <div class="acts">
+              <button class="btn ghost" data-act="launcher-reset">恢复默认</button>
+            </div>
+          </div>
+          <div class="scroll settings">
+            <div class="setcard">
+              <div class="sc-head"><b>常用位</b><em id="launcher-count">0 / 10</em></div>
+              <div id="launcher-picked"></div>
+            </div>
+            <div class="setcard">
+              <div class="sc-head"><b>全部入口</b><em>点名称加入，最多 10 个</em></div>
+              <div id="launcher-all"></div>
+            </div>
+            <div class="hintline">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 7.4v3.4M8 5.2v.2" stroke-linecap="round"/></svg>
+              启动失败会写 launch.log 并在桌面弹提示；入口命令由后端白名单决定。
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== 使用文档 ========== -->
+        <section class="page page-docs">
+          <div class="head">
+            <div>
+              <h2>使用文档</h2>
+              <p>常用操作速查。找不到入口时，先看这里。</p>
+            </div>
+          </div>
+          <div class="scroll settings">
+            <div class="setcard">
+              <div class="sc-head"><b>移动与布局</b><em>不用进编辑态</em></div>
+              <div class="doc-sec">
+                <ul>
+                  <li><b>移动卡片</b><span>鼠标移到卡片顶部，出现一条短横线后按住拖动。松手自动吸附到 6px 网格和邻卡边缘。</span></li>
+                  <li><b>移动面板</b><span>按住收纳面板的标题栏拖动；右下角斜纹把手可以改面板大小。</span></li>
+                  <li><b>键盘</b><span>选中卡片后按 <code>Shift+F10</code> 或菜单键打开卡片菜单；<code>Esc</code> 关闭菜单和浮层。</span></li>
+                </ul>
+              </div>
+              <div class="doc-sec">
+                <h3>卡片操作</h3>
+                <ul>
+                  <li><b>右键卡片</b><span>改尺寸、换材质、添加组件、移除组件都在这里。</span></li>
+                  <li><b>单击打开</b><span>系统监视 / 网络 / 时钟卡片点一下，分别打开任务管理器 / 网络设置 / 时钟。</span></li>
+                  <li><b>双击天气</b><span>双击天气卡打开地区设置，搜索城市或区县后选中即生效。</span></li>
+                  <li><b>系统入口</b><span>点图标打开常用入口；卡片右上「›」展开全部，可搜索、按分类筛选。常用项在「系统入口」页改。</span></li>
+                </ul>
+              </div>
+              <div class="doc-sec">
+                <h3>添加与外观</h3>
+                <ul>
+                  <li><b>添加组件</b><span>控制中心 →「添加组件」，或右键卡片 →「添加组件」。按尺寸分组，点哪一档就加哪一档。</span></li>
+                  <li><b>材质</b><span>控制中心一改，所有卡片和面板一起变；右键单卡可临时覆盖，下次改全局会重新统一。</span></li>
+                  <li><b>其它设置</b><span>「外观与行为」里可调缩放、图标标签、时钟秒数，换壁纸后可刷新桌面底图。</span></li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="setcard">
+              <div class="sc-head"><b>桌面收纳</b><em>真实移动文件</em></div>
+              <div class="doc-sec">
+                <ul>
+                  <li><b>收纳图标</b><span>把桌面上的图标拖到面板里的分组即可。文件被真实移动到 <code>&lt;桌面&gt;\fy-desktop\&lt;组名&gt;</code>。</span></li>
+                  <li><b>分组管理</b><span>右键分组标题：重命名、上移、下移、在资源管理器中打开、删除。删除分组只会把文件移回桌面。</span></li>
+                  <li><b>面板开关</b><span>「收纳文件夹」页的「桌面收纳」开关只控制面板显不显示，分组和磁盘文件都保留。</span></li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="setcard">
+              <div class="sc-head"><b>托盘与排查</b><em>出问题先看这里</em></div>
+              <div class="doc-sec">
+                <ul>
+                  <li><b>托盘</b><span>左键托盘图标打开控制中心；右键还有开机自启、显示秒、打开收纳目录、配置文件、关于和退出。</span></li>
+                  <li><b>配置与日志</b><span>都在 <code>%APPDATA%\com.fy.desktop</code>：<code>config.json</code> 是配置，<code>launch.log</code> 记录每次打开动作。</span></li>
+                  <li><b>打开失败</b><span>系统入口点了没反应时，看 <code>launch.log</code> 里的 ShellExecute 错误码，桌面也会弹一条提示。</span></li>
+                  <li><b>图标被挡</b><span>卡片默认从左侧空出一段给桌面图标。图标太多时把图标收进分组，或直接拖动卡片避开。</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="hintline">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 7.4v3.4M8 5.2v.2" stroke-linecap="round"/></svg>
+              本页随程序一起更新，不需要联网。
             </div>
           </div>
         </section>

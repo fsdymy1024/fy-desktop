@@ -336,6 +336,8 @@ body[data-page="widgets"] .page-widgets,
 body[data-page="gallery"] .page-gallery,
 body[data-page="settings"] .page-settings,
 body[data-page="groups"] .page-groups,
+body[data-page="launcher"] .page-launcher,
+body[data-page="docs"] .page-docs,
 body[data-page="about"] .page-about {
   display: flex;
 }
@@ -1456,4 +1458,196 @@ body[data-mat="solid"] .dlg {
   padding: 24px;
   font-size: 12px;
   color: var(--ink2);
+}
+
+/* ============================ 系统入口常用项 ============================ */
+.fav-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 11px;
+  border-top: 1px solid var(--line);
+}
+
+.fav-row:first-child {
+  border-top: 0;
+}
+
+.fav-row .fav-ico {
+  width: 14px;
+  flex: 0 0 14px;
+  display: grid;
+  place-items: center;
+}
+
+.fav-row .idx {
+  width: 16px;
+  flex: 0 0 16px;
+  font-size: 9.5px;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+
+.fav-row .fav-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fav-row .fav-name small {
+  display: block;
+  font-size: 9px;
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fav-row .ops {
+  display: flex;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.fav-row .ops button {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--ink2);
+  display: grid;
+  place-items: center;
+}
+
+.fav-row .ops button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.fav-row .ops button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.fav-empty {
+  padding: 14px 12px;
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+
+.all-entry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+}
+
+.all-entry:first-child {
+  border-top: 0;
+}
+
+.all-entry:hover {
+  background: var(--hover);
+}
+
+.all-entry .dotmark {
+  width: 14px;
+  flex: 0 0 14px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.all-entry .nm {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+}
+
+.all-entry .nm small {
+  display: block;
+  font-size: 8.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.all-entry .tag {
+  font-size: 9px;
+  color: var(--ink3);
+  flex: 0 0 auto;
+}
+
+.all-entry.on .nm {
+  font-weight: 600;
+}
+
+.fav-row svg,
+.all-entry svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--ink2);
+}
+
+/* ============================ 使用文档 ============================ */
+.doc-sec {
+  padding: 11px 13px;
+}
+
+.doc-sec + .doc-sec {
+  border-top: 1px solid var(--line);
+}
+
+.doc-sec h3 {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.doc-sec ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.doc-sec li {
+  display: flex;
+  gap: 9px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--ink2);
+}
+
+.doc-sec li b {
+  flex: 0 0 62px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.doc-sec li span {
+  min-width: 0;
+}
+
+.doc-sec code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 9.5px;
+  color: var(--ink2);
+  background: var(--hover);
+  border-radius: 4px;
+  padding: 1px 4px;
+  white-space: nowrap;
 }

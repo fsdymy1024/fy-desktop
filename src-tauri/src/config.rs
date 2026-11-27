@@ -32,12 +32,12 @@ pub fn dims(size: &str) -> (f64, f64) {
 /// 某个组件允许的尺寸档位。
 ///
 /// v0.7 起除备忘录外一律取消「大」：210×126 在桌面上太占地方，而多出来的
-/// 24px 高度只够把同样的内容排松一点，读者并不会因此多看到信息。
-/// 日历和备忘录塞不下 102×102，本来就没有「小」，所以日历只剩「中」一档。
+/// 24px 高度只够把同样的内容排松一点。系统入口的 10 个常用位在中号 5×2
+/// 刚好排满，所以也只有「中」一档；日历塞不下 102×102，同样只剩「中」。
 pub fn sizes_for(kind: &str) -> &'static [&'static str] {
     match kind {
         "notes" => &["m", "l"],
-        "calendar" => &["m"],
+        "launcher" | "calendar" => &["m"],
         _ => &["s", "m"],
     }
 }
@@ -146,6 +146,9 @@ pub struct Config {
     /// 缓存时正文直接丢，而其它状态都在 config.json 里——两套持久化策略不一致。
     #[serde(default)]
     pub notes: BTreeMap<String, String>,
+    /// 系统入口组件的 10 个常用位，存入口 id。全局共用一份，控制中心可编辑。
+    #[serde(default = "d_launcher_favorites")]
+    pub launcher_favorites: Vec<String>,
 }
 
 fn d_material() -> String {
@@ -161,6 +164,9 @@ fn d_weather() -> WeatherCfg {
         city: "上海".into(),
         admin: "上海市".into(),
     }
+}
+fn d_launcher_favorites() -> Vec<String> {
+    crate::launcher::default_favorites()
 }
 
 /// 收纳面板的宽度。
@@ -219,6 +225,7 @@ impl Config {
             show_seconds: true,
             auto_update: true,
             notes: BTreeMap::new(),
+            launcher_favorites: d_launcher_favorites(),
         }
     }
 }
@@ -459,6 +466,9 @@ pub fn normalize(cfg: &mut Config, design_w: f64, design_h: f64) {
     // 备忘录键跟着组件走：组件删了正文也不该一直躺在配置里
     let ids: Vec<String> = cfg.widgets.iter().map(|w| w.id.clone()).collect();
     cfg.notes.retain(|id, _| ids.iter().any(|x| x == id));
+
+    // 常用项只能来自白名单，最多 10 个；后端命令值允许改它，这里兜住脏配置
+    crate::launcher::normalize_favorites(&mut cfg.launcher_favorites);
 }
 
 #[cfg(test)]
@@ -524,5 +534,29 @@ mod tests {
         normalize(&mut c, 1920.0, 1080.0);
         assert!(c.weather.lat.abs() <= 90.0);
         assert!(c.weather.lon.abs() <= 180.0);
+    }
+
+    #[test]
+    fn normalize_launcher_favorites_filters_and_caps() {
+        let mut c = sample();
+        c.launcher_favorites = vec![
+            "settings".into(),
+            "settings".into(),
+            "calc".into(),
+            "cmd.exe /c del".into(),
+            "display".into(),
+        ];
+        normalize(&mut c, 1920.0, 1080.0);
+        assert_eq!(c.launcher_favorites, vec!["settings", "calc", "display"]);
+
+        c.launcher_favorites = vec!["__bad__".into()];
+        normalize(&mut c, 1920.0, 1080.0);
+        assert_eq!(c.launcher_favorites.len(), 10, "全非法时退回默认 10 项");
+    }
+
+    #[test]
+    fn launcher_only_allows_medium_size() {
+        assert_eq!(sizes_for("launcher"), &["m"]);
+        assert_eq!(dims("m"), (210.0, 102.0));
     }
 }

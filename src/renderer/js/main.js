@@ -6,7 +6,7 @@
  */
 
 import { invoke, invokeRetry, listen, emitTo, unlistenAll } from './bridge.js';
-import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf, GAP } from './widgets.js';
+import { REGISTRY, setShowSeconds, SIZE_LABEL, dimsOf, GAP, launcherSvg } from './widgets.js';
 import { renderOrganizer, groupAtPoint, resetLoose, clearIconCache } from './organizer.js';
 import { clamp } from './util.js';
 
@@ -24,7 +24,9 @@ const S = {
   version: '',
   shotMode: false,
   /// 分组配色由后端下发（boot.palette），前端不再自己写一份
-  palette: []
+  palette: [],
+  /// 系统入口清单同样由后端下发，卡片与控制中心共用
+  launcherEntries: []
 };
 
 /* 吸附网格。网格粒度 = 最小缝隙 GAP = 6（widgets.js 导出，和尺寸同源）：
@@ -67,6 +69,7 @@ async function boot() {
   S.version = b.version || '';
   S.shotMode = !!b.shot;
   S.palette = Array.isArray(b.palette) ? b.palette : [];
+  S.launcherEntries = Array.isArray(b.launcher_entries) ? b.launcher_entries : [];
 
   layoutStage();
   applyMaterial();
@@ -252,6 +255,17 @@ function buildCard(w) {
   body.className = 'body';
   el.appendChild(body);
 
+  // 顶部拖拽条：不进编辑态也能直接移动卡片。右侧留 30px 给系统入口的「›」按钮。
+  const drag = document.createElement('div');
+  drag.className = 'card-drag';
+  drag.title = '拖动移动组件';
+  drag.setAttribute('aria-label', '拖动移动组件');
+  el.appendChild(drag);
+  drag.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    startDrag(e, el, w);
+  });
+
   let inst = null;
   try {
     inst = def.mount(body, {
@@ -265,14 +279,22 @@ function buildCard(w) {
         // 正文单独落盘，不等 320ms 的整份回传：关窗/崩溃也不丢最后几个字。
         // 命令不可用时退回整份回传。
         invoke('set_note', { id: w.id, text }).catch(() => save());
-      }
+      },
+      // 系统入口：清单来自后端白名单，常用项来自配置；启动失败在这里统一 toast
+      entries: () => S.launcherEntries,
+      favorites: () => S.cfg.launcher_favorites || [],
+      openEntry: (id) =>
+        invoke('open_launcher_entry', { id }).catch((err) =>
+          toast(`打开「${launcherName(id)}」失败：${err?.message || err}`)
+        ),
+      openPop: () => openLauncherPop(w)
     });
   } catch (err) {
     console.error('[fy] 组件挂载失败', w.kind, err);
     body.innerHTML = `<div class="k">组件加载失败</div>`;
   }
 
-  // 卡片上不再挂工具条：换尺寸、移除、调整布局全部收进右键菜单。
+  // 卡片上不再挂工具条：换尺寸、移除全在右键菜单；移动走顶部拖拽条。
   // 编辑态只留「拖动」这一件事，卡片本身保持干净——工具条会压住右上角的
   // 内容（尤其是小号卡），而且三颗小按钮在桌面场景里太难点。
   return { el, inst };
@@ -328,7 +350,7 @@ function bindCard(el, w) {
     startDrag(e, el, w);
   });
 
-  // 右键卡片 = 这张卡的全部设置：尺寸、调整布局、添加、移除。
+  // 右键卡片 = 这张卡的全部设置：尺寸、材质、添加、移除。
   // 以前这些散在「编辑布局」和卡片右上角的小按钮里，先得进编辑态才找得到。
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -339,7 +361,10 @@ function bindCard(el, w) {
   // 双击天气卡直接改地区：这是最常用的设置，不该藏进托盘。
   // v1.1 起弹层统一由控制中心承载，和「设置 → 天气地区」是同一套 UI 与逻辑。
   if (w.kind === 'weather') {
-    el.addEventListener('dblclick', () => openHub('settings', { type: 'weather', compact: true }));
+    el.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.card-drag')) return;
+      openHub('settings', { type: 'weather', compact: true });
+    });
   }
 
   // 单击系统监视 / 网络 / 时钟：打开 Windows 自带的对应界面。
@@ -354,7 +379,7 @@ function bindCard(el, w) {
       );
     el.addEventListener('click', (e) => {
       if (S.edit) return;
-      if (e.target.closest('textarea, input, button, select, a, [contenteditable="true"]')) return;
+      if (e.target.closest('textarea, input, button, select, a, [contenteditable="true"], .card-drag')) return;
       openSys();
     });
     el.addEventListener('keydown', (e) => {
@@ -367,6 +392,7 @@ function bindCard(el, w) {
 
 /** 组件右键菜单 */
 function openCardMenu(el, w, x, y) {
+  closeLauncherPop();
   const def = REGISTRY[w.kind] || { name: w.kind };
   const cur = w.size || 'm';
   const items = [{ head: true, label: `${def.name} · ${SIZE_LABEL[cur]} ${dimsOf(cur).join('×')}` }];
@@ -395,7 +421,6 @@ function openCardMenu(el, w, x, y) {
   }
 
   items.push({ sep: true });
-  items.push({ label: '调整布局…', act: () => startLayout() });
   items.push({ label: '添加组件…', act: () => openGal() });
   items.push({ sep: true });
   items.push({
@@ -405,12 +430,6 @@ function openCardMenu(el, w, x, y) {
   });
 
   showMenu({ x, y }, items);
-}
-
-/** 进入布局编辑：卡片可拖动（吸网格 + 参考线），Esc 或「完成」退出 */
-function startLayout() {
-  setEdit(true);
-  toast('拖动卡片调整位置，Esc 结束');
 }
 
 /** 换档位：尺寸、位置、内容一起重排。
@@ -714,7 +733,7 @@ const handlers = {
     save();
   },
   /** 面板顶部 / 空白处右键：跟组件右键菜单同一套结构（标题 · 材质 · 动作），
-   *  但面板没有尺寸档位，所以不出「尺寸」和「调整布局」这两段。 */
+   *  但面板没有尺寸档位，所以不出「尺寸」那一段。 */
   panelMenu: (e) => {
     const o = S.cfg.organizer;
     const groups = S.view?.groups ?? o.groups ?? [];
@@ -885,7 +904,6 @@ function attachPanelChrome(el) {
   el.insertAdjacentHTML('beforeend', `<div class="grip" title="拖动改变面板大小"></div>`);
   const grip = el.querySelector('.grip');
   grip.addEventListener('pointerdown', (e) => {
-    if (!S.edit) return;
     e.preventDefault();
     const o = S.cfg.organizer;
     const sx = e.clientX;
@@ -913,7 +931,6 @@ function attachPanelChrome(el) {
   });
 
   el.addEventListener('pointerdown', (e) => {
-    if (!S.edit) return;
     if (!e.target.closest('.org-head')) return;
     if (e.target.closest('.iconbtn')) return;
     const o = S.cfg.organizer;
@@ -1127,6 +1144,8 @@ function updateHit() {
   if (bar && !bar.hidden) push(bar, 24);
   const menu = $('#menu');
   if (menu && !menu.hidden) push(menu, 24);
+  const launcherPop = $('#launcher-pop');
+  if (launcherPop && !launcherPop.hidden) push(launcherPop, 8);
 
   // 托盘菜单不在这里：#traymenu 已经搬进独立小窗（traypop），
   // 那是另一个窗口，和本窗口的区域裁剪无关。
@@ -1229,9 +1248,6 @@ function handleHubAction(a) {
     case 'refresh-glass':
       loadGlass();
       break;
-    case 'edit-layout':
-      startLayout();
-      break;
     case 'set-organizer':
       setOrganizer(!!a.on);
       break;
@@ -1249,8 +1265,11 @@ function onConfigChanged(cfg) {
   const prev = S.cfg;
   const labelsChanged = (prev.show_labels !== false) !== (cfg.show_labels !== false);
   const secChanged = (prev.show_seconds !== false) !== (cfg.show_seconds !== false);
+  const favBefore = JSON.stringify(prev.launcher_favorites || []);
 
   adoptConfig(cfg);
+  if (Array.isArray(cfg.launcher_favorites)) S.cfg.launcher_favorites = cfg.launcher_favorites;
+  const favChanged = favBefore !== JSON.stringify(S.cfg.launcher_favorites || []);
   S.cfg.autostart = !!cfg.autostart;
   S.cfg.auto_update = cfg.auto_update !== false;
   S.cfg.show_labels = cfg.show_labels !== false;
@@ -1260,6 +1279,12 @@ function onConfigChanged(cfg) {
 
   if (labelsChanged) applyMaterial();
   if (secChanged) setShowSeconds(S.cfg.show_seconds);
+  if (favChanged) {
+    for (const [id, m] of S.mounted) {
+      const w = S.cfg.widgets.find((x) => x.id === id);
+      if (w?.kind === 'launcher') m.inst?.setFavorites?.(S.cfg.launcher_favorites || []);
+    }
+  }
 }
 
 /**
@@ -1382,6 +1407,163 @@ function hideMenu() {
   const menu = $('#menu');
   if (menu.hidden) return;
   menu.hidden = true;
+  invoke('set_menu_rect', { rect: null }).catch(() => {});
+  updateHit();
+}
+
+/* ---- 系统入口：全部入口浮层 ---- */
+
+function launcherName(id) {
+  return S.launcherEntries.find((e) => e.id === id)?.name || id;
+}
+
+let launcherPopState = { cat: '全部', q: '' };
+let launcherDrag = null;
+
+function renderLauncherPop() {
+  const pop = $('#launcher-pop');
+  if (!pop || pop.hidden) return;
+  const q = launcherPopState.q.trim().toLowerCase();
+  const list = S.launcherEntries.filter(
+    (e) =>
+      (launcherPopState.cat === '全部' || e.cat === launcherPopState.cat) &&
+      (!q || (e.name + e.cmd + e.desc + e.cat).toLowerCase().includes(q))
+  );
+  const cats = ['全部', '设置', '工具', '管理'];
+  let html = `<div class="lp-head">
+      <div><b>全部系统入口</b><span>共 ${S.launcherEntries.length} 项 · 点击即打开</span></div>
+      <button id="lpClose" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="lp-search">
+      <svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M15 15l6 6"/></svg>
+      <input id="lpq" placeholder="搜索名称或命令，如 ms-settings:display" autocomplete="off">
+    </div>
+    <div class="lp-cats">${cats
+      .map(
+        (c) =>
+          `<button data-lpcat="${c}" class="${launcherPopState.cat === c ? 'on' : ''}">${c}</button>`
+      )
+      .join('')}</div>
+    <div class="lp-list">`;
+  let lastCat = '';
+  for (const e of list) {
+    if (e.cat !== lastCat) {
+      html += `<div class="lp-group">${escapeHtml(e.cat)}</div>`;
+      lastCat = e.cat;
+    }
+    html += `<div class="lp-row" data-lpid="${escapeHtml(e.id)}" title="${escapeHtml(e.cmd)}">
+      ${launcherSvg(e.icon)}
+      <span class="lp-meta"><b>${escapeHtml(e.name)}</b><em>${escapeHtml(e.desc)}</em></span>
+      <code>${escapeHtml(e.cmd)}</code>
+    </div>`;
+  }
+  if (!list.length) html += `<div class="lp-group">没有匹配的入口</div>`;
+  html += `</div><div class="lp-foot">点击即打开 · 失败写 launch.log 并 toast</div>`;
+  pop.innerHTML = html;
+  const input = pop.querySelector('#lpq');
+  if (input) input.value = launcherPopState.q;
+}
+
+function syncLauncherPopRect() {
+  const pop = $('#launcher-pop');
+  if (!pop || pop.hidden) {
+    invoke('set_menu_rect', { rect: null }).catch(() => {});
+    return;
+  }
+  const r = pop.getBoundingClientRect();
+  const d = dpr();
+  invoke('set_menu_rect', {
+    rect: [r.left * d, r.top * d, r.right * d, r.bottom * d]
+  }).catch(() => {});
+}
+
+function openLauncherPop(w) {
+  hideMenu();
+  const pop = $('#launcher-pop');
+  if (!pop) return;
+  launcherPopState = { cat: '全部', q: '' };
+  // 位置用设计像素；#stage 自己会被 scale，所以这里不用乘 S.scale。
+  const left = Math.max(0, Math.min(w.x + w.w + 12, S.design.w - 292));
+  const top = Math.max(0, Math.min(w.y, S.design.h - 388));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+  pop.hidden = false;
+
+  pop.onclick = (ev) => {
+    if (ev.target.closest('#lpClose')) return closeLauncherPop();
+    const cat = ev.target.closest('[data-lpcat]');
+    if (cat) {
+      launcherPopState.cat = cat.dataset.lpcat;
+      renderLauncherPop();
+      return;
+    }
+    const row = ev.target.closest('[data-lpid]');
+    if (!row) return;
+    const id = row.dataset.lpid;
+    closeLauncherPop();
+    invoke('open_launcher_entry', { id }).catch((err) =>
+      toast(`打开「${launcherName(id)}」失败：${err?.message || err}`)
+    );
+  };
+  pop.oninput = (ev) => {
+    if (ev.target.id !== 'lpq') return;
+    launcherPopState.q = ev.target.value;
+    renderLauncherPop();
+    const input = pop.querySelector('#lpq');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  };
+
+  // 标题栏拖动：鼠标位移是 CSS 像素，浮层坐标是设计像素，所以要除以 scale。
+  pop.onpointerdown = (ev) => {
+    if (ev.button !== 0 || !ev.target.closest('.lp-head') || ev.target.closest('#lpClose')) return;
+    launcherDrag = {
+      sx: ev.clientX,
+      sy: ev.clientY,
+      x: parseFloat(pop.style.left) || 0,
+      y: parseFloat(pop.style.top) || 0
+    };
+    pop.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  };
+  pop.onpointermove = (ev) => {
+    if (!launcherDrag) return;
+    const dx = (ev.clientX - launcherDrag.sx) / (S.scale || 1);
+    const dy = (ev.clientY - launcherDrag.sy) / (S.scale || 1);
+    const x = Math.max(0, Math.min(launcherDrag.x + dx, S.design.w - pop.offsetWidth));
+    const y = Math.max(0, Math.min(launcherDrag.y + dy, S.design.h - pop.offsetHeight));
+    pop.style.left = `${x}px`;
+    pop.style.top = `${y}px`;
+    updateHit();
+    syncLauncherPopRect();
+  };
+  const endDrag = (ev) => {
+    if (!launcherDrag) return;
+    launcherDrag = null;
+    if (pop.hasPointerCapture?.(ev.pointerId)) pop.releasePointerCapture(ev.pointerId);
+  };
+  pop.onpointerup = endDrag;
+  pop.onpointercancel = endDrag;
+
+  renderLauncherPop();
+  updateHit();
+  syncLauncherPopRect();
+}
+
+function closeLauncherPop() {
+  const pop = $('#launcher-pop');
+  if (!pop || pop.hidden) return;
+  pop.hidden = true;
+  pop.innerHTML = '';
+  pop.onclick = null;
+  pop.oninput = null;
+  pop.onpointerdown = null;
+  pop.onpointermove = null;
+  pop.onpointerup = null;
+  pop.onpointercancel = null;
+  launcherDrag = null;
   invoke('set_menu_rect', { rect: null }).catch(() => {});
   updateHit();
 }
@@ -1541,10 +1723,15 @@ function bindGlobalEvents() {
   });
 
   listen('menu:outside', () => {
-    // 卡片右键菜单的矩形和托盘小窗共用一个后端槽位：点菜单外面时两边都该收起。
-    // 托盘小窗自己也在听这个事件（见 js/traymenu.js），这里只管卡片菜单。
+    // 卡片右键菜单和系统入口浮层共用一个后端矩形槽位：点外面时都该收起。
+    // 托盘小窗自己也在听这个事件（见 js/traymenu.js）。
     if (!$('#menu').hidden) hideMenu();
+    closeLauncherPop();
   }).catch(() => {});
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeLauncherPop();
+  });
 
   // 调试：FY_UI=traymenu|traybottom|trayright|trayleft|traytop 直接弹托盘菜单，
   // 核对四种任务栏位置下的落点。菜单本体在 traypop 小窗里，这里只伪造一条托盘

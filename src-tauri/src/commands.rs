@@ -19,6 +19,8 @@ pub struct Boot {
     /// 分组配色由后端下发。以前前端 organizer.js 和 commands.rs 各写一份，
     /// 加一个颜色就得改两处，迟早漂移。
     pub palette: Vec<String>,
+    /// 系统入口清单：卡片和控制中心共用，避免两边各写一份命令表
+    pub launcher_entries: Vec<crate::launcher::LauncherEntry>,
     /// 本次是否自检截图模式（截图时要等数据齐了再拍）
     pub shot: bool,
     /// 调试：启动后自动打开某个弹层（FY_UI=place|group），配合截图核对用
@@ -41,6 +43,7 @@ pub fn boot(state: State<'_, AppState>) -> Boot {
         version: env!("CARGO_PKG_VERSION").into(),
         autostart,
         palette: crate::consts::GROUP_COLORS.iter().map(|c| c.to_string()).collect(),
+        launcher_entries: crate::launcher::entries(),
         shot: std::env::var("FY_SHOT").is_ok(),
         uitest: std::env::var("FY_UI").unwrap_or_default(),
     }
@@ -59,6 +62,7 @@ pub struct HubBoot {
     pub root: String,
     pub autostart: bool,
     pub palette: Vec<String>,
+    pub launcher_entries: Vec<crate::launcher::LauncherEntry>,
     /// 窗口还没加载完时攒下的「打开哪一页 / 弹哪个框」
     pub pending: Option<serde_json::Value>,
 }
@@ -71,6 +75,7 @@ pub fn hub_boot(state: State<'_, AppState>, pending: State<'_, HubPending>) -> H
         root: desktop::root_dir(&cfg).to_string_lossy().to_string(),
         autostart: crate::autostart::is_enabled(),
         palette: crate::consts::GROUP_COLORS.iter().map(|c| c.to_string()).collect(),
+        launcher_entries: crate::launcher::entries(),
         version: env!("CARGO_PKG_VERSION").into(),
         config: cfg,
         pending,
@@ -215,8 +220,8 @@ pub fn ui_ready(app: AppHandle, nav: Option<String>, boots: Option<u32>) {
 /// 前端整份回传配置。返回值是「后端最终采纳的那份」，前端拿它刷新自己的 `rev`。
 ///
 /// 两条写路径（前端整份回传 / 后端命令增量改）同时存在时，靠 `rev` 判断新鲜度：
-/// 版本对不上说明中间有命令改过配置，这时分组与天气以后端为准——否则一次防抖
-/// 回传就会把「刚建好的分组」「刚改完的地区」抹掉。
+/// 版本对不上说明中间有命令改过配置，这时分组、天气与系统入口常用项以后端为准——
+/// 否则一次防抖回传就会把「刚建好的分组」「刚改完的地区」「刚挑好的常用入口」抹掉。
 #[tauri::command]
 pub fn save_config(app: AppHandle, state: State<'_, AppState>, mut config: Config) -> Config {
     let design = *crate::state::lock(&state.design);
@@ -227,6 +232,8 @@ pub fn save_config(app: AppHandle, state: State<'_, AppState>, mut config: Confi
         if config.rev != cur.rev {
             config.organizer.groups = cur.organizer.groups.clone();
             config.weather = cur.weather.clone();
+            // 控制中心刚改过常用项时，桌面窗口的旧副本不该把它盖回去
+            config.launcher_favorites = cur.launcher_favorites.clone();
             true
         } else {
             false
@@ -306,6 +313,29 @@ pub fn open_url(url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn open_system(target: String) -> Result<(), String> {
     desktop::open_system(&target)
+}
+
+/// 打开「系统入口」组件里的某项。前端只传 id，白名单在 crate::launcher。
+#[tauri::command]
+pub fn open_launcher_entry(id: String) -> Result<(), String> {
+    desktop::open_launcher_entry(&id)
+}
+
+/// 控制中心改系统入口的常用项。走后端命令而不是整份回传：这里会校验白名单、
+/// 限制 10 个，并立刻广播给桌面窗口刷新卡片。
+#[tauri::command]
+pub fn set_launcher_favorites(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    favorites: Vec<String>,
+) -> Result<(), String> {
+    let design = *crate::state::lock(&state.design);
+    state.with_config(|c| {
+        c.launcher_favorites = favorites;
+        crate::config::normalize(c, design.0, design.1);
+    });
+    broadcast_config(&app);
+    Ok(())
 }
 
 #[tauri::command]

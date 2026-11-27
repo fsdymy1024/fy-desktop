@@ -727,6 +727,29 @@ pub fn open_system(target: &str) -> Result<(), String> {
     }
 }
 
+/// 打开「系统入口」组件里的某一项。
+///
+/// 前端只传白名单 id（见 crate::launcher），命令字符串永远留在后端。
+/// 和 open_system 一样：每次尝试都写 launch.log，失败返回 Err 让前端 toast。
+pub fn open_launcher_entry(id: &str) -> Result<(), String> {
+    let target = crate::launcher::target_for(id)
+        .ok_or_else(|| format!("未知的系统入口：{id}"))?;
+    #[cfg(windows)]
+    {
+        let code = shell_execute(target);
+        log_launch(&format!("launcher {id} → {target} = {code}"));
+        if code > 32 {
+            return Ok(());
+        }
+        return Err(format!("打开失败（ShellExecute {code}）：{id}"));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = target;
+        Err("仅支持 Windows".into())
+    }
+}
+
 pub fn reveal_path(path: &str) -> Result<(), String> {
     #[cfg(windows)]
     {

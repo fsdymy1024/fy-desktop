@@ -172,6 +172,41 @@ body[data-glass="0"] .surface::before {
   flex-direction: column;
 }
 
+/* 卡片顶部拖拽条：方案 B 的直接移动入口。
+   右侧空出 30px，避免压住「系统入口」卡片右上角的「›」按钮。 */
+.card-drag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 30px;
+  height: 18px;
+  z-index: 5;
+  border-radius: var(--radius) var(--radius) 0 0;
+  cursor: grab;
+}
+
+.card-drag::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  width: 18px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ink3);
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 0.16s;
+}
+
+.card:hover .card-drag::after {
+  opacity: 0.35;
+}
+
+.card-drag:active {
+  cursor: grabbing;
+}
+
 /* 点一下能打开系统界面的卡片；编辑态的 cursor: grab 特异性更高，会覆盖它 */
 .card[data-opener="1"] {
   cursor: pointer;
@@ -1436,7 +1471,7 @@ body[data-edit="1"] .panel:active {
   width: 16px;
   height: 16px;
   z-index: 5;
-  display: none;
+  display: block;
   cursor: nwse-resize;
   border-radius: 5px;
   background-image: linear-gradient(
@@ -1448,10 +1483,6 @@ body[data-edit="1"] .panel:active {
   );
   background-size: 6px 6px;
   background-position: 4px 4px;
-}
-
-body[data-edit="1"] .grip {
-  display: block;
 }
 
 #editbar {
@@ -2845,4 +2876,291 @@ body[data-material="solid"] .cell.empty .ic {
 .ab-head,
 .modal-title {
   user-select: none;
+}
+
+/* ==========================================================================
+   系统入口组件
+   卡片只有中号一档，放 10 个常用位（5×2）；全部入口走 #launcher-pop 浮层。
+   ========================================================================== */
+.lk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 14px;
+  font-size: 10px;
+  color: var(--ink2);
+}
+
+.lk-more {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink3);
+  transition: background 0.16s, color 0.16s;
+}
+
+.lk-more:hover {
+  background: rgba(226, 98, 44, 0.16);
+  color: var(--accent);
+}
+
+.lk-grid {
+  display: grid;
+  gap: 5px;
+  margin-top: 5px;
+  min-height: 0;
+}
+
+.card[data-kind="launcher"][data-size="m"] .lk-grid {
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 4px;
+}
+
+.lk-slot {
+  min-width: 0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  transition: background 0.16s;
+}
+
+.lk-slot:hover {
+  background: rgba(226, 98, 44, 0.14);
+}
+
+.lk-slot svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.lk-lb {
+  max-width: 100%;
+  font-size: 8px;
+  line-height: 1.1;
+  color: var(--ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 全部入口浮层。配色走 --pop-*，和右键菜单/编辑条跟着同一套材质变。 */
+#launcher-pop {
+  position: absolute;
+  z-index: 70;
+  width: 280px;
+  max-height: 380px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--pop-bg, rgba(26, 34, 48, 0.985));
+  border: 1px solid var(--pop-bd, rgba(255, 255, 255, 0.1));
+  box-shadow: 0 30px 60px -24px rgba(0, 0, 0, 0.7), 0 4px 12px -6px rgba(0, 0, 0, 0.4);
+  color: var(--pop-ink, rgba(238, 243, 250, 0.92));
+}
+
+#launcher-pop[hidden] {
+  display: none;
+}
+
+.lp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 13px 8px;
+  cursor: move;
+  user-select: none;
+}
+
+.lp-head b {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lp-head span {
+  display: block;
+  font-size: 9px;
+  color: var(--pop-ink3, rgba(238, 243, 250, 0.38));
+  margin-top: 2px;
+}
+
+.lp-head button {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--pop-ink3, rgba(238, 243, 250, 0.38));
+}
+
+.lp-head button:hover {
+  background: var(--pop-btn-hover, rgba(255, 255, 255, 0.16));
+  color: var(--pop-ink, rgba(238, 243, 250, 0.92));
+}
+
+.lp-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 13px 8px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: var(--pop-field, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--pop-line, rgba(255, 255, 255, 0.1));
+}
+
+.lp-search svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: var(--pop-ink3, rgba(238, 243, 250, 0.38));
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.lp-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  font-size: 10px;
+  color: var(--pop-ink, rgba(238, 243, 250, 0.92));
+}
+
+.lp-search input::placeholder {
+  color: var(--pop-ink3, rgba(238, 243, 250, 0.38));
+}
+
+.lp-cats {
+  display: flex;
+  gap: 4px;
+  padding: 0 13px 7px;
+  border-bottom: 1px solid var(--pop-line, rgba(255, 255, 255, 0.1));
+}
+
+.lp-cats button {
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 9.5px;
+  color: var(--pop-ink3, rgba(238, 243, 250, 0.38));
+}
+
+.lp-cats button:hover {
+  background: var(--pop-btn, rgba(255, 255, 255, 0.09));
+  color: var(--pop-ink2, rgba(238, 243, 250, 0.58));
+}
+
+.lp-cats button.on {
+  background: rgba(226, 98, 44, 0.18);
+  color: #f0a67c;
+  font-weight: 600;
+}
+
+.lp-list {
+  overflow: auto;
+  padding: 4px 7px 6px;
+}
+
+.lp-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.lp-list::-webkit-scrollbar-thumb {
+  background: var(--pop-btn, rgba(255, 255, 255, 0.09));
+  border-radius: 3px;
+}
+
+.lp-group {
+  padding: 6px 6px 2px;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  color: var(--pop-ink3, rgba(238, 243, 250, 0.38));
+}
+
+.lp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 37px;
+  padding: 0 7px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+
+.lp-row:hover {
+  background: var(--pop-hover, rgba(140, 190, 255, 0.14));
+}
+
+.lp-row svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--pop-ink2, rgba(238, 243, 250, 0.58));
+}
+
+.lp-row:hover svg {
+  color: var(--accent);
+}
+
+.lp-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.lp-meta b {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.lp-meta em {
+  display: block;
+  font-style: normal;
+  font-size: 8.5px;
+  color: var(--pop-ink3, rgba(238, 243, 250, 0.38));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lp-row code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 8.5px;
+  color: var(--pop-ink3, rgba(238, 243, 250, 0.38));
+  white-space: nowrap;
+}
+
+.lp-foot {
+  flex: 0 0 27px;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  border-top: 1px solid var(--pop-line, rgba(255, 255, 255, 0.1));
+  font-size: 8.5px;
+  color: var(--pop-ink3, rgba(238, 243, 250, 0.38));
 }

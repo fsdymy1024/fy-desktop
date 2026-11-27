@@ -6,6 +6,35 @@
 
 import { esc, linkRate, pad2, speed, spark, wxIcon, WEEK } from './util.js';
 
+/** 系统入口图标：只有「怎么画」，入口清单由后端 boot 下发（见 launcher.rs）。 */
+const LAUNCHER_ICONS = {
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  sound: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/>',
+  wifi: '<path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8.5 16a6 6 0 0 1 7 0"/><circle cx="12" cy="20" r=".8"/>',
+  palette: '<path d="M12 3a9 9 0 1 0 0 18h1.2a2 2 0 0 0 1.4-3.4 2 2 0 0 1 1.4-3.4H18a3 3 0 0 0 3-3A9 9 0 0 0 12 3z"/>',
+  apps: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9 2 2-2 2 2 2-3 3-2-2-2 2-2-2"/>',
+  update: '<path d="M20 11a8 8 0 1 0-2.3 6"/><path d="M20 5v6h-6"/><path d="M12 8v4l3 2"/>',
+  shield: '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  note: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h5"/>',
+  calc: '<rect x="4" y="2.5" width="16" height="19" rx="2.5"/><path d="M8 7h8M8 12h2M14 12h2M8 16h2M14 16h2"/>',
+  scissors: '<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><path d="M8 8l11 11M8 16L19 5"/>',
+  keyboard: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M8 16h8"/>',
+  search: '<circle cx="10" cy="10" r="6"/><path d="M15 15l6 6"/>',
+  remote: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M10 8l4 2.5-4 2.5z"/>',
+  folder: '<path d="M3 6h7l2 2h9v11H3z"/>',
+  terminal: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 9l3 3-3 3M12 15h5"/>',
+  activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6"/>',
+  chip: '<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="10" y="10" width="4" height="4"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  network: '<circle cx="12" cy="5" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="M12 7v4M12 11L5 16M12 11l7 5"/>'
+};
+export const launcherSvg = (key) =>
+  `<svg viewBox="0 0 24 24" aria-hidden="true">${LAUNCHER_ICONS[key] || LAUNCHER_ICONS.gear}</svg>`;
+
 /** 预设尺寸（设计像素）。和后端 config.rs 的 dims() 是同一套数：
  *  小 102×102、中 210×102、大 210×126。
  *  宽高都是吸附网格（main.js 的 GRID = 6）的整数倍，且中/大宽度 = 两个小 + 一条缝：
@@ -490,6 +519,55 @@ export const REGISTRY = {
     }
   },
 
+  /* ---------------- 系统入口 ---------------- */
+  launcher: {
+    kind: 'launcher',
+    name: '系统入口',
+    desc: '10 个常用系统入口，点一下直达',
+    sizes: ['m'],
+    def: 'm',
+    preview: () => `<b>10 项</b><span>常用系统入口</span>`,
+    mount(body, ctx) {
+      let favs = Array.isArray(ctx?.favorites?.()) ? ctx.favorites().slice(0, 10) : [];
+      const entries = () => (Array.isArray(ctx?.entries?.()) ? ctx.entries() : []);
+      body.innerHTML = `<div class="lk-head"><span>系统入口</span>
+        <button class="lk-more" title="查看全部入口" aria-label="查看全部入口">›</button></div>
+        <div class="lk-grid"></div>`;
+      const grid = body.querySelector('.lk-grid');
+      const more = body.querySelector('.lk-more');
+
+      function paint() {
+        const all = entries();
+        grid.innerHTML = favs
+          .map((id) => all.find((e) => e.id === id))
+          .filter(Boolean)
+          .slice(0, 10)
+          .map(
+            (e) => `<button class="lk-slot" data-id="${esc(e.id)}" title="${esc(e.name)} · ${esc(e.cmd)}">
+              ${launcherSvg(e.icon)}<span class="lk-lb">${esc(e.name)}</span></button>`
+          )
+          .join('');
+      }
+
+      grid.addEventListener('click', (ev) => {
+        const slot = ev.target.closest('.lk-slot');
+        if (slot) ctx?.openEntry?.(slot.dataset.id);
+      });
+      more.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        ctx?.openPop?.();
+      });
+      paint();
+
+      return {
+        setFavorites(list) {
+          favs = Array.isArray(list) ? list.slice(0, 10) : [];
+          paint();
+        }
+      };
+    }
+  },
+
   /* ---------------- 备忘录 ---------------- */
   notes: {
     kind: 'notes',
@@ -533,4 +611,4 @@ export const REGISTRY = {
   }
 };
 
-export const ORDER = ['weather', 'clock', 'calendar', 'system', 'network', 'notes', 'digital'];
+export const ORDER = ['weather', 'clock', 'calendar', 'system', 'network', 'launcher', 'notes', 'digital'];
