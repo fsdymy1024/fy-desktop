@@ -39,3 +39,5 @@ src-tauri/gen/
 src-tauri/scripts/sign.env.json
 # WorkBuddy 本地数据（调试截图、临时预览等）
 .workbuddy/
+
+design/
