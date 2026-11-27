@@ -567,9 +567,9 @@ body[data-glass="0"] .surface::before {
   height: 5px;
   border-radius: 50%;
   background: #35ab68;
-  box-shadow: 0 0 0 2.5px rgba(53, 171, 104, 0.16);
 }
 
+/* 右上角状态 / 协商速率跟卡片头部其它文字一样，不单独铺底纹、描边 */
 .net-link {
   margin-left: auto;
   display: inline-flex;
@@ -577,10 +577,6 @@ body[data-glass="0"] .surface::before {
   gap: 4px;
   font-size: 9.5px;
   color: var(--ink2);
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 6px;
-  padding: 2px 6px;
   max-width: 120px;
   white-space: nowrap;
 }
@@ -2058,10 +2054,8 @@ body[data-material="glass"] .panel .cell:hover,
 
 body[data-material="glass"] .panel .iconbtn,
 body[data-material="glass"] .panel .ghost,
-body[data-material="glass"] .panel .net-link,
 .card[data-material="glass"] .iconbtn,
-.card[data-material="glass"] .ghost,
-.card[data-material="glass"] .net-link {
+.card[data-material="glass"] .ghost {
   background: rgba(255, 255, 255, 0.10);
   border-color: rgba(255, 255, 255, 0.14);
 }
@@ -2141,8 +2135,7 @@ body[data-material="dusk"] .cell:hover {
 }
 
 body[data-material="dusk"] .iconbtn,
-body[data-material="dusk"] .ghost,
-body[data-material="dusk"] .net-link {
+body[data-material="dusk"] .ghost {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.14);
 }
@@ -2243,8 +2236,7 @@ body[data-material="solid"] .cell:hover {
 }
 
 body[data-material="solid"] .iconbtn,
-body[data-material="solid"] .ghost,
-body[data-material="solid"] .net-link {
+body[data-material="solid"] .ghost {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.12);
 }
@@ -2305,8 +2297,7 @@ body[data-material="solid"] .cell.empty .ic {
 }
 
 .surface.on-dark .iconbtn,
-.surface.on-dark .ghost,
-.surface.on-dark .net-link {
+.surface.on-dark .ghost {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.14);
 }
