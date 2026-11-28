@@ -10,10 +10,21 @@ use serde::Serialize;
 /// 卡片最多显示多少个常用位。控制中心超过这个数会拒绝保存。
 pub const MAX_FAVORITES: usize = 10;
 
-/// (id, 名称, 说明, 启动目标, 图标键)
+/// 一个入口真正交给 ShellExecute 的目标。
 ///
-/// 启动目标分两类：`ms-settings:` 协议 URI 与 Win+R 里的运行命令。
-/// 都由 desktop::shell_execute 处理，失败会写 launch.log。
+/// `file` 与 `params` 分开传，才能表达 `control.exe ncpa.cpl` 这种
+/// 「宿主程序 + 参数」的启动方式；把两段拼成一个字符串会被当成文件路径。
+#[derive(Debug, Clone, Copy)]
+pub struct LaunchTarget {
+    pub file: &'static str,
+    pub params: &'static str,
+}
+
+/// (id, 名称, 说明, 展示用命令, 图标键)
+///
+/// 展示命令用于悬停提示，实际启动目标由 `target_for()` 解析：多数是
+/// `ms-settings:` 协议 URI 或 Win+R 运行命令，`.cpl` 例外走 control.exe。
+/// 最终都由 desktop::shell_execute 处理，失败会写 launch.log。
 const ENTRIES: &[(&str, &str, &str, &str, &str)] = &[
     ("settings", "设置", "Windows 设置主页", "ms-settings:", "gear"),
     ("display", "显示", "分辨率、缩放、多显示器", "ms-settings:display", "monitor"),
@@ -94,11 +105,26 @@ pub fn is_valid(id: &str) -> bool {
     ENTRIES.iter().any(|(key, _, _, _, _)| *key == id)
 }
 
-pub fn target_for(id: &str) -> Option<&'static str> {
-    ENTRIES
+pub fn target_for(id: &str) -> Option<LaunchTarget> {
+    let cmd = ENTRIES
         .iter()
         .find(|(key, _, _, _, _)| *key == id)
-        .map(|(_, _, _, target, _)| *target)
+        .map(|(_, _, _, cmd, _)| *cmd)?;
+
+    // `ncpa.cpl` 在部分机器上没有注册 open 关联：直接 ShellExecuteW 会返回
+    // 31（SE_ERR_NO_ASSOCIATION），但 Win+R 手动执行正常。交给控制面板宿主
+    // 解析，避免依赖 `.cpl` 的文件关联。
+    if cmd == "ncpa.cpl" {
+        return Some(LaunchTarget {
+            file: "control.exe",
+            params: "ncpa.cpl",
+        });
+    }
+
+    Some(LaunchTarget {
+        file: cmd,
+        params: "",
+    })
 }
 
 /// 首次安装时的 10 个常用位（中号卡片 5×2）。
@@ -125,5 +151,24 @@ pub fn normalize_favorites(favorites: &mut Vec<String>) {
     });
     if seen.is_empty() {
         *favorites = default_favorites();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn net_uses_control_panel_host() {
+        let target = target_for("net").expect("网络连接入口应存在");
+        assert_eq!(target.file, "control.exe");
+        assert_eq!(target.params, "ncpa.cpl");
+    }
+
+    #[test]
+    fn regular_entry_has_no_params() {
+        let target = target_for("taskmgr").expect("任务管理器入口应存在");
+        assert_eq!(target.file, "taskmgr");
+        assert_eq!(target.params, "");
     }
 }

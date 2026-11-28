@@ -6,6 +6,13 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 提交约定见 [docs/versioning.md](docs/versioning.md)。
 
+## [Unreleased]
+
+### 修复
+
+- 系统入口「网络连接」改为通过 `control.exe ncpa.cpl` 启动，不再直接依赖 `.cpl`
+  文件关联；此前点击会报 `ShellExecute 31`（无关联程序），手动运行命令却正常。
+
 ## [1.4.0] - 2026-11-27
 
 这一版把常用系统功能放到桌面上，卡片也不用先进入编辑态就能挪位置；控制中心新增

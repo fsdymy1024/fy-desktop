@@ -665,29 +665,38 @@ pub fn open_url(url: &str) -> Result<(), String> {
     Err("仅支持 Windows".into())
 }
 
-/// ShellExecute 打开任意目标，返回原始返回值（> 32 才算成功）。
+/// ShellExecute 打开目标，并把 `params` 传给目标程序。
 ///
+/// `file` 与 `params` 必须分开传：`control.exe ncpa.cpl` 这种宿主程序形式
+/// 拼成一个字符串时，Shell 会把整串当成文件名，返回 31（无关联程序）。
 /// 返回值是 shell 的错误码，日志里能看到到底卡在哪一步：
 /// 2 找不到文件、5 拒绝访问、31 没有关联程序。
 #[cfg(windows)]
-fn shell_execute(target: &str) -> isize {
+fn shell_execute_with_params(target: &str, params: &str) -> isize {
     use windows::core::{HSTRING, PCWSTR};
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     let op = HSTRING::from("open");
     let file = HSTRING::from(target);
+    let params = HSTRING::from(params);
     unsafe {
         ShellExecuteW(
             None,
             PCWSTR(op.as_ptr()),
             PCWSTR(file.as_ptr()),
-            PCWSTR::null(),
+            PCWSTR(params.as_ptr()),
             PCWSTR::null(),
             SW_SHOWNORMAL,
         )
     }
     .0 as isize
+}
+
+/// ShellExecute 打开任意目标，不带参数。
+#[cfg(windows)]
+fn shell_execute(target: &str) -> isize {
+    shell_execute_with_params(target, "")
 }
 
 /// 打开 Windows 自带的对应界面（任务管理器 / 网络设置 / 时钟）。
@@ -736,8 +745,11 @@ pub fn open_launcher_entry(id: &str) -> Result<(), String> {
         .ok_or_else(|| format!("未知的系统入口：{id}"))?;
     #[cfg(windows)]
     {
-        let code = shell_execute(target);
-        log_launch(&format!("launcher {id} → {target} = {code}"));
+        let code = shell_execute_with_params(target.file, target.params);
+        log_launch(&format!(
+            "launcher {id} → {} {} = {code}",
+            target.file, target.params
+        ));
         if code > 32 {
             return Ok(());
         }
